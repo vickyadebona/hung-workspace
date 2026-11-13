@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": [
+        "-c",
+        ". \"$HOME/.nvm/nvm.sh\" && nvm exec 22 npm run dev"
+      ],
+      "port": 4321
+    }
+  ]
+}

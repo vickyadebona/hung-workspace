@@ -1,0 +1,11 @@
+---
+import Base from '../../layouts/Base.astro';
+import Workspace from '../../components/Workspace';
+import { ensureWelcome } from '../../lib/seed';
+await ensureWelcome();
+const { id } = Astro.params;
+const user = Astro.locals.user;
+---
+<Base>
+  <Workspace client:only="react" initialId={id ?? null} userName={user.name} userEmail={user.email} />
+</Base>

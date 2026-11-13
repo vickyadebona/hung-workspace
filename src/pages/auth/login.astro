@@ -1,0 +1,29 @@
+---
+import Base from '@/layouts/Base.astro';
+import { buttonVariants } from '@/components/ui/button';
+import { googleConfigured, env } from '../../lib/auth';
+const google = googleConfigured();
+const dev = env('AUTH_DEV') === '1';
+const error = Astro.url.searchParams.get('error');
+const messages: Record<string, string> = {
+  denied: 'That Google account is not on the allowed list.',
+  failed: 'Sign-in did not work. Please try again.',
+  state: 'Sign-in expired. Please try again.',
+};
+const btn = buttonVariants({ variant: 'outline', size: 'lg' }) + ' w-full';
+---
+<Base title="Sign in · Hung Workspace">
+  <main class="grid min-h-svh place-items-center bg-sidebar p-4">
+    <div class="w-full max-w-sm rounded-2xl border bg-card p-8 text-center text-card-foreground shadow-sm">
+      <span class="mx-auto mb-4 grid size-11 place-items-center rounded-xl bg-primary text-lg font-semibold text-primary-foreground" aria-hidden="true">H</span>
+      <h1 class="text-xl font-semibold tracking-tight">Hung Workspace</h1>
+      <p class="mt-1 mb-6 text-sm text-muted-foreground">Sign in to continue</p>
+      {error && <div class="mb-4 text-sm text-destructive" role="alert">{messages[error] ?? 'Something went wrong.'}</div>}
+      <div class="grid gap-2">
+        {google && <a class={btn} href="/auth/google">Continue with Google</a>}
+        {dev && <a class={btn} href="/auth/dev">Local dev sign-in (no Google)</a>}
+      </div>
+      {!google && !dev && <p class="text-sm text-muted-foreground">Sign-in is not set up yet. See the README: add Google credentials to <code>.env</code>.</p>}
+    </div>
+  </main>
+</Base>
