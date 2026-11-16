@@ -9,3 +9,5 @@ _update.tar
 .vercel
 scripts/hq-data.json
 .DS_Store
+.env.*.local
+*.local

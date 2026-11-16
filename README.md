@@ -43,6 +43,29 @@ While developing, `npm run dev` gives instant reloads.
 
 Use **+ New database** in the sidebar. Each database has Table, Board, List and Calendar views with filters, sorting and properties (text, number, select, multi-select, date, checkbox, link). Board cards drag between columns (or use the "Move to" dropdown on a card, which also works on a phone). Calendar items drag between days. Rows don't appear in the sidebar; open one to get a full page with its properties on top. Edits to properties and views don't count as page edits, so they never trigger the "changed elsewhere" banner. Changes made by someone else show up when you switch back to the tab.
 
+## Backups
+
+Your pages live in `content/`, which git deliberately leaves out, so they are backed up separately. On this Mac a background job runs **every hour** and writes a compressed copy of every page to:
+
+- `~/Backups/hung-workspace/` on this Mac, and
+- `My Drive/Hung Workspace Backups/` in Google Drive (needs Google Drive for desktop; skipped if it isn't installed).
+
+Nothing is written when no page has changed. It keeps every backup from the last 2 days, then the newest of each day for 30 days.
+
+```bash
+scripts/backup-schedule.sh install     # turn the hourly job on (already done on this Mac; needs Node 22)
+scripts/backup-schedule.sh status      # is it running, and what did it last do
+scripts/backup-schedule.sh uninstall   # turn it off (existing backups are kept)
+
+npm run backup                         # make a backup right now
+npm run backup -- list                 # see what backups exist
+npm run backup -- restore ~/Backups/hung-workspace/<file>.tar.gz
+```
+
+`restore` unpacks into a **new** folder (`content-restored-<time>/`) and never overwrites your current pages; look it over, then swap it in for `content/`. Each backup is a plain archive of Markdown files, so you can also open one by double-clicking it.
+
+Once the app runs online, your pages are in the database instead. Run `DATABASE_URL=... npm run backup` to back those up the same way.
+
 ## How two people don't overwrite each other
 
 There's no live co-editing yet. Each save carries the version it started from. If the page changed elsewhere in the meantime, saving pauses and a banner offers "Load latest", so nobody's work is silently lost.
@@ -56,7 +79,7 @@ npx astro check   # types
 
 ## Not yet (planned)
 
-Relations, rollups and formulas, Claude access (API/MCP), backups to Google Drive and Mac, quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
+Relations, rollups and formulas, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
 
 ## Put it on Vercel (shared with Andrew)
 
