@@ -5,7 +5,7 @@ A small, Notion-style workspace for two. Phase 1: nested pages, a block editor, 
 ## Run it on your Mac
 
 ```bash
-cd ~/code/own-notion
+cd ~/code/hung-workspace
 cp .env.example .env     # then edit .env (see below)
 npm install
 npm run build
