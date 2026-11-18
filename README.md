@@ -100,7 +100,7 @@ In a database, **Properties → New property** now also offers:
 
 Relations never cross spaces, and a database that is linked to another can't be moved to a different space on its own. Worked-out columns (the other side of a relation, rollups) are never stored in the files, so they can't go out of date.
 
-For pages: every page shows a **breadcrumb** above its title, and a **Sub-pages** list with an "Add a sub-page" button at the bottom. In the editor, type **/** and choose **Sub-page** to create a page inside the current one and drop a link to it where you are typing. (Putting a whole database inline in a page is not built yet.)
+For pages: every page shows a **breadcrumb** above its title. In the editor, type **/page** to create a page inside the current one; it appears right there in the text as a block with its icon and current name (rename the page and the block follows), and clicking it opens the page. In the file it is stored as a line holding just a link, `[📄 Title](/p/<id>)`. Deleting the block only removes the reference; the page stays in the sidebar, and any pages inside a page that aren't shown in its text (for example ones made with the sidebar's **+**) are listed under "Pages inside this page". (Putting a whole database inline in a page is not built yet.)
 
 `npm run convert-hq` is a one-off that upgrades the TerraScape HQ databases to use all this: Tasks' plain-text Milestone becomes a real link to Milestones, Owner (Vicky / Andrew / Both) becomes a Person, and Milestones gain a task count and progress. It shows what it would do first; add `--apply` to do it. Back up first (`npm run backup -- --force`). To do the online copy, run it with `DATABASE_URL=... npm run convert-hq -- --apply`.
 

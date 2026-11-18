@@ -7,8 +7,10 @@ import '@blocknote/mantine/style.css';
 import { cn } from '@/lib/utils';
 import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, FileTextIcon, PlusIcon, Table2Icon } from 'lucide-react';
+import { ChevronRightIcon, FileTextIcon, Table2Icon } from 'lucide-react';
 import { api, type Page, type PageMeta } from './api';
+import { childPageIds, childPagesToLinks, linkParagraphsToChildPages } from './childpage-blocks';
+import { pageRegistry, pageSchema } from './childpage';
 
 type SaveState = 'saved' | 'saving' | 'error' | 'conflict';
 
@@ -31,7 +33,10 @@ interface Props {
 const SAVE_DELAY_MS = 800;
 
 export default function PageEditor({ page, theme, onMeta, onReload, extra, ancestors = [], subpages = [], spaceName, onOpen, onSubCreated }: Props) {
-  const editor = useCreateBlockNote();
+  const editor = useCreateBlockNote({ schema: pageSchema });
+  // pages that appear as blocks in the text (the rest, if any, are listed under the text)
+  const [inline, setInline] = useState<string[]>([]);
+  const toMarkdown = useCallback(() => editor.blocksToMarkdownLossy(childPagesToLinks(editor.document as any[], (id) => pageRegistry.pages.get(id)) as any), [editor]);
   const [title, setTitle] = useState(page.title);
   const [icon, setIcon] = useState(page.icon);
   const [state, setState] = useState<SaveState>('saved');
@@ -46,10 +51,11 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
 
   // Load the Markdown body into the editor once.
   useEffect(() => {
-    const blocks = editor.tryParseMarkdownToBlocks(page.body);
+    const blocks = linkParagraphsToChildPages(editor.tryParseMarkdownToBlocks(page.body) as any[]) as any[];
     editor.replaceBlocks(editor.document, blocks.length ? blocks : [{ type: 'paragraph' }]);
+    setInline(childPageIds(editor.document as any[]));
     // Remember the editor's own normalised form so merely opening a page never triggers a save.
-    savedBody.current = editor.blocksToMarkdownLossy(editor.document);
+    savedBody.current = toMarkdown();
     loaded.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -57,7 +63,7 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
   const save = useCallback(() => {
     if (blocked.current) return;
     // Read the editor now (not later): the editor may be torn down when the user switches pages.
-    const body = editor.blocksToMarkdownLossy(editor.document);
+    const body = toMarkdown();
     const snapshot = { title: latest.current.title, icon: latest.current.icon };
     queue.current = queue.current.then(async () => {
       if (blocked.current) return;
@@ -81,14 +87,15 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
         setState('error');
       }
     });
-  }, [editor, page.id, onMeta]);
+  }, [editor, page.id, onMeta, toMarkdown]);
 
   const schedule = useCallback(() => {
     if (!loaded.current || blocked.current) return;
+    setInline(childPageIds(editor.document as any[]));
     setState('saving');
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(save, SAVE_DELAY_MS);
-  }, [save]);
+  }, [save, editor]);
 
   // Save pending edits if the tab closes or the user switches page.
   useEffect(() => {
@@ -106,33 +113,33 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
     };
   }, [save]);
 
-  /** Make a page inside this one. With a block, also leave a link to it in the text where the cursor is. */
-  const createSub = async (withLink: boolean) => {
+  /** Make a page inside this one. With `inText`, also put a page block where the cursor is, like typing /page in Notion. */
+  const createSub = async (inText: boolean) => {
     if (blocked.current) return;
     const child = await api.create({ parent: page.id, title: 'Untitled' });
-    if (withLink) {
+    if (inText) {
       const here = editor.getTextCursorPosition().block;
-      editor.insertBlocks([{ type: 'paragraph', content: [{ type: 'link', href: `/p/${child.id}`, content: '📄 Untitled' }] }], here, 'after');
+      editor.insertBlocks([{ type: 'childPage', props: { pageId: child.id } } as any], here, 'after');
     }
     onSubCreated?.(child);
   };
 
-  const slashItems = async (query: string) =>
-    filterSuggestionItems(
-      [
-        ...getDefaultReactSlashMenuItems(editor),
-        {
-          title: 'Sub-page',
-          subtext: 'Create a page inside this one and link to it here',
-          aliases: ['page', 'subpage', 'sub-page', 'new page'],
-          group: 'Basic blocks',
-          onItemClick: () => {
-            void createSub(true);
-          },
-        },
-      ],
-      query,
-    );
+  const slashItems = async (query: string) => {
+    const defaults = getDefaultReactSlashMenuItems(editor);
+    const item = {
+      title: 'Page',
+      subtext: 'Create a page inside this one',
+      aliases: ['page', 'sub-page', 'subpage', 'new page', 'child'],
+      group: 'Basic blocks',
+      onItemClick: () => {
+        void createSub(true);
+      },
+    };
+    // put it first among the basic blocks, where people look for it
+    const at = defaults.findIndex((d) => d.group === 'Basic blocks');
+    const items = at < 0 ? [...defaults, item] : [...defaults.slice(0, at), item, ...defaults.slice(at)];
+    return filterSuggestionItems(items, query);
+  };
 
   // A link to another page in this workspace opens inside the app instead of reloading it.
   const followLinks = (e: React.MouseEvent) => {
@@ -211,12 +218,13 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
         </BlockNoteView>
       </div>
 
-      <section aria-label="Sub-pages" className="mt-8 border-t pt-4">
-        {subpages.length > 0 && (
-          <>
-            <h2 className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">Sub-pages</h2>
-            <ul className="mb-2">
-              {subpages.map((c) => (
+      {subpages.some((c) => !inline.includes(c.id)) && (
+        <section aria-label="Pages inside this page" className="mt-8 border-t pt-4">
+          <h2 className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">Pages inside this page</h2>
+          <ul>
+            {subpages
+              .filter((c) => !inline.includes(c.id))
+              .map((c) => (
                 <li key={c.id}>
                   <Button variant="ghost" size="sm" className="w-full justify-start font-normal" onClick={() => onOpen?.(c.id)}>
                     {c.icon ? <span aria-hidden>{c.icon}</span> : c.kind === 'database' ? <Table2Icon className="text-muted-foreground" /> : <FileTextIcon className="text-muted-foreground" />}
@@ -224,13 +232,9 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
                   </Button>
                 </li>
               ))}
-            </ul>
-          </>
-        )}
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void createSub(false)}>
-          <PlusIcon /> Add a sub-page
-        </Button>
-      </section>
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

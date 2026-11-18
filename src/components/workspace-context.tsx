@@ -6,9 +6,11 @@ export interface WorkspaceData {
   people: Record<string, string>; // email -> name
   spaces: Space[];
   pages: PageMeta[];
+  /** Open a page (used by page blocks inside a page's text). */
+  openPage: (id: string) => void;
 }
 
-const Ctx = createContext<WorkspaceData>({ people: {}, spaces: [], pages: [] });
+const Ctx = createContext<WorkspaceData>({ people: {}, spaces: [], pages: [], openPage: () => {} });
 export const WorkspaceDataProvider = Ctx.Provider;
 export const useWorkspaceData = () => useContext(Ctx);
 
