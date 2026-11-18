@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, LogOutIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, FolderInputIcon, FoldersIcon, LogOutIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
 import {
   Sidebar,
@@ -23,13 +33,14 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { api, type Page, type PageMeta } from './api';
+import { api, type Page, type PageMeta, type Space } from './api';
 import { ConfirmDeleteDialog } from './ConfirmDelete';
 import DatabaseView from './DatabaseView';
 import PageEditor from './PageEditor';
 import RowProps from './RowProps';
 import SearchModal from './SearchModal';
-import SettingsDialog, { Avatar } from './SettingsDialog';
+import NewSpaceDialog from './NewSpaceDialog';
+import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
 
 interface Props {
   initialId: string | null;
@@ -40,6 +51,12 @@ interface Props {
 function idFromPath(): string | null {
   const m = location.pathname.match(/^\/p\/([a-z0-9]+)/);
   return m ? m[1] : null;
+}
+
+/** The page to land on in a space: its first top-level page. */
+function firstPage(list: PageMeta[], space: string | null): PageMeta | undefined {
+  const inSpace = list.filter((p) => p.space === space && !p.database);
+  return inSpace.find((p) => !p.parent) ?? inSpace[0];
 }
 
 export default function Workspace(props: Props) {
@@ -61,6 +78,11 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   const [loading, setLoading] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('preferences');
+  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [personalId, setPersonalId] = useState<string | null>(null);
+  const [activeSpace, setActiveSpaceState] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<PageMeta | null>(null);
   const logoutForm = useRef<HTMLFormElement>(null);
   const { setOpenMobile } = useSidebar();
@@ -73,6 +95,15 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   });
   const [reloadKey, setReloadKey] = useState(0);
   const theme = useTheme();
+
+  const setActiveSpace = useCallback((id: string) => {
+    setActiveSpaceState(id);
+    try {
+      localStorage.setItem('wn_space', id);
+    } catch {
+      /* private window: the choice just won't be remembered */
+    }
+  }, []);
 
   const go = useCallback((id: string | null, replace = false) => {
     const url = id ? `/p/${id}` : '/';
@@ -107,16 +138,25 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     return list;
   }, []);
 
-  // Initial list; land on the first top-level page if no page is chosen
+  // Initial load: spaces and pages together; land on the first top-level page of the chosen space if no page is chosen
   useEffect(() => {
-    refreshList().then((list) => {
-      if (!idFromPath()) {
-        const first = list.find((p) => !p.parent && !p.database) ?? list.find((p) => !p.database);
-        if (first) go(first.id, true);
-        else setLoading(false);
+    Promise.all([api.spaces(), refreshList()]).then(([sp, list]) => {
+      setSpaces(sp.spaces);
+      setPersonalId(sp.personal);
+      if (idFromPath()) return; // the page's own space is picked once it loads
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem('wn_space');
+      } catch {
+        saved = null;
       }
+      const space = sp.spaces.find((x) => x.id === saved)?.id ?? sp.personal;
+      setActiveSpace(space);
+      const first = firstPage(list, space);
+      if (first) go(first.id, true);
+      else setLoading(false);
     });
-  }, [refreshList, go]);
+  }, [refreshList, go, setActiveSpace]);
 
   // Load the page body whenever the selection changes
   useEffect(() => {
@@ -129,6 +169,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
       if (cancelled) return;
       setPage(p);
       setRowDb(parentDb);
+      if (p) setActiveSpace(p.space); // opening a page from search or a link switches to its space
       setMissing(!p);
       setLoading(false);
       if (p) {
@@ -148,7 +189,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [currentId, reloadKey]);
+  }, [currentId, reloadKey, setActiveSpace]);
 
   const pagesRef = useMemoRef(pages);
 
@@ -158,27 +199,28 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
 
   const children = useMemo(() => {
     const m = new Map<string | null, PageMeta[]>();
-    for (const p of pages) {
+    const inSpace = pages.filter((p) => p.space === activeSpace);
+    for (const p of inSpace) {
       if (p.database) continue; // database rows live inside their database, not in the sidebar
-      const k = p.parent && pages.some((x) => x.id === p.parent) ? p.parent : null;
+      const k = p.parent && inSpace.some((x) => x.id === p.parent) ? p.parent : null;
       m.set(k, [...(m.get(k) ?? []), p]);
     }
     return m;
-  }, [pages]);
+  }, [pages, activeSpace]);
 
   const onMeta = useCallback((id: string, patch: { title?: string; icon?: string; updatedAt?: string }) => {
     setPages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
 
   const addPage = async (parent: string | null) => {
-    const p = await api.create({ parent });
+    const p = await api.create({ parent, space: activeSpace });
     await refreshList();
     if (parent) setExpanded((prev) => new Set(prev).add(parent));
     go(p.id);
   };
 
   const addDatabase = async () => {
-    const p = await api.create({ kind: 'database', title: 'Untitled database', parent: null });
+    const p = await api.create({ kind: 'database', title: 'Untitled database', parent: null, space: activeSpace });
     await refreshList();
     go(p.id);
   };
@@ -187,10 +229,66 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     const removed = await api.remove(id);
     const list = await refreshList();
     if (currentId && removed.includes(currentId)) {
-      const next = list.find((p) => !p.parent && !p.database) ?? list.find((p) => !p.database);
+      const next = firstPage(list, activeSpace);
       go(next ? next.id : null, true);
       if (!next) setPage(null);
     }
+  };
+
+  /** Show another space: its first page if it has one, otherwise an empty state with a "create your first page" button. */
+  const switchSpace = (id: string) => {
+    setActiveSpace(id);
+    const first = firstPage(pages, id);
+    if (first) go(first.id);
+    else {
+      history.pushState(null, '', '/');
+      setCurrentId(null);
+      setPage(null);
+      setMissing(false);
+      setLoading(false);
+      setOpenMobile(false);
+    }
+  };
+
+  const movePage = async (p: PageMeta, target: Space) => {
+    try {
+      const moved = await api.movePage(p.id, target.id);
+      await refreshList();
+      if (currentId && moved.includes(currentId)) {
+        setActiveSpace(target.id);
+        setReloadKey((k) => k + 1);
+      } else if (p.id === (page?.database ?? null)) {
+        setActiveSpace(target.id);
+      }
+    } catch (e) {
+      window.alert((e as Error).message);
+    }
+  };
+
+  const onSpaceChange = (space: Space) => setSpaces((prev) => prev.map((x) => (x.id === space.id ? space : x)));
+  const onSpaceCreated = (space: Space) => {
+    setSpaces((prev) => [...prev, space]);
+    setActiveSpace(space.id);
+    history.pushState(null, '', '/');
+    setCurrentId(null);
+    setPage(null);
+    setMissing(false);
+    setLoading(false);
+    setSettingsOpen(false);
+  };
+  const onLeftSpace = async (id: string) => {
+    setSpaces((prev) => prev.filter((x) => x.id !== id));
+    await refreshList();
+    if (activeSpace === id && personalId) {
+      setActiveSpace(personalId);
+      const first = firstPage(await api.list(), personalId);
+      if (first) go(first.id, true);
+    }
+  };
+  const openSettings = (section: SettingsSection) => {
+    setSettingsSection(section);
+    setOpenMobile(false);
+    setSettingsOpen(true);
   };
 
   const toggle = (id: string) =>
@@ -206,16 +304,51 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     setOpen(true);
   };
   const hasKids = (id: string) => (children.get(id) ?? []).length > 0;
+  const activeInfo = spaces.find((x) => x.id === activeSpace);
   const emptyState = 'grid h-[60vh] place-items-center text-center text-muted-foreground';
 
   return (
     <>
       <Sidebar>
         <SidebarHeader>
-          <div className="flex items-center gap-2 px-2 pt-1.5 pb-1">
-            <Avatar name="Hung Workspace" className="size-6" />
-            <span className="truncate text-sm font-semibold">Hung Workspace</span>
-          </div>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton size="lg" aria-label="Switch space">
+                    <span className="grid size-7 flex-none place-items-center rounded-md bg-sidebar-accent text-base" aria-hidden>
+                      {activeInfo?.icon || '📁'}
+                    </span>
+                    <span className="grid min-w-0 flex-1 leading-tight">
+                      <span className="truncate text-sm font-semibold">{activeInfo?.name ?? 'Hung Workspace'}</span>
+                      <span className="truncate text-xs text-muted-foreground">{activeInfo?.kind === 'personal' ? 'Only you' : activeInfo ? `${activeInfo.members.length} ${activeInfo.members.length === 1 ? 'person' : 'people'}` : ''}</span>
+                    </span>
+                    <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width) min-w-60">
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Spaces</DropdownMenuLabel>
+                  {spaces.map((sp) => (
+                    <DropdownMenuItem key={sp.id} onSelect={() => switchSpace(sp.id)}>
+                      <span className="w-5 text-center" aria-hidden>
+                        {sp.icon}
+                      </span>
+                      <span className="truncate">{sp.name}</span>
+                      <span className="ml-auto text-xs text-muted-foreground">{sp.kind === 'personal' ? 'Private' : 'Shared'}</span>
+                      {sp.id === activeSpace && <CheckIcon className="text-primary" />}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setNewSpaceOpen(true)}>
+                    <PlusIcon /> New shared space
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => openSettings('spaces')}>
+                    <FoldersIcon /> Manage spaces
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton className="text-sidebar-foreground/80" onClick={() => openOver(setSearchOpen)}>
@@ -224,7 +357,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
-              <SidebarMenuButton className="text-sidebar-foreground/80" onClick={() => openOver(setSettingsOpen)}>
+              <SidebarMenuButton className="text-sidebar-foreground/80" onClick={() => openSettings('preferences')}>
                 <SettingsIcon /> <span>Settings</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -233,7 +366,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
 
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>Pages</SidebarGroupLabel>
+            <SidebarGroupLabel>{activeInfo?.kind === 'personal' ? 'My pages' : 'Pages'}</SidebarGroupLabel>
             <SidebarGroupContent>
               <nav aria-label="Pages">
                 <Tree
@@ -246,6 +379,9 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
                   onOpen={(id) => go(id)}
                   onAdd={addPage}
                   onRemove={setDeleting}
+                  spaces={spaces}
+                  activeSpace={activeSpace}
+                  onMove={movePage}
                 />
               </nav>
               <SidebarMenu className="mt-1">
@@ -281,7 +417,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
                 <DropdownMenuContent side="top" align="start" className="w-(--radix-dropdown-menu-trigger-width) min-w-56">
                   <DropdownMenuLabel className="truncate font-normal text-muted-foreground">{userEmail}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => openOver(setSettingsOpen)}>
+                  <DropdownMenuItem onSelect={() => openSettings('preferences')}>
                     <SettingsIcon /> Settings
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => logoutForm.current?.submit()}>
@@ -342,6 +478,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
       </SidebarInset>
 
       <SearchModal
+        spaces={spaces}
         open={searchOpen}
         onOpenChange={setSearchOpen}
         onOpen={(id) => {
@@ -355,7 +492,13 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
         user={{ name: userName, email: userEmail }}
         theme={theme}
         onSignOut={() => logoutForm.current?.submit()}
+        spaces={spaces}
+        openSection={settingsSection}
+        onSpaceChange={onSpaceChange}
+        onLeftSpace={onLeftSpace}
+        onNewSpace={() => setNewSpaceOpen(true)}
       />
+      <NewSpaceDialog open={newSpaceOpen} onOpenChange={setNewSpaceOpen} onCreated={onSpaceCreated} />
       <ConfirmDeleteDialog
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
@@ -388,13 +531,17 @@ interface TreeProps {
   onOpen: (id: string) => void;
   onAdd: (parent: string | null) => void;
   onRemove: (page: PageMeta) => void;
+  spaces: Space[];
+  activeSpace: string | null;
+  onMove: (page: PageMeta, space: Space) => void;
 }
 
 const rowAction =
   'grid size-5 place-items-center rounded-sm text-muted-foreground outline-none hover:bg-sidebar-border hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring [&_svg]:size-3.5';
 
 function Tree(props: TreeProps) {
-  const { parent, depth, children, currentId, expanded, onToggle, onOpen, onAdd, onRemove } = props;
+  const { parent, depth, children, currentId, expanded, onToggle, onOpen, onAdd, onRemove, spaces, activeSpace, onMove } = props;
+  const others = spaces.filter((x) => x.id !== activeSpace);
   const items = children.get(parent) ?? [];
   if (depth === 0 && items.length === 0) return null;
   return (
@@ -421,15 +568,41 @@ function Tree(props: TreeProps) {
                   <ChevronRightIcon className={cn('transition-transform', open && 'rotate-90')} />
                 </button>
               )}
-              <span className="absolute top-[5px] right-1 flex gap-0.5 md:hidden md:group-hover/row:flex md:group-focus-within/row:flex">
+              <span className="absolute top-[5px] right-1 flex gap-0.5 md:hidden md:group-hover/row:flex md:group-focus-within/row:flex md:has-[[data-state=open]]:flex">
                 {p.kind !== 'database' && (
                   <button className={rowAction} aria-label={`Add page inside ${p.title}`} title="Add a page inside" onClick={() => onAdd(p.id)}>
                     <PlusIcon />
                   </button>
                 )}
-                <button className={rowAction} aria-label={`Delete ${p.title}`} title="Delete" onClick={() => onRemove(p)}>
-                  <Trash2Icon />
-                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className={rowAction} aria-label={`More actions for ${p.title}`} title="More">
+                      <MoreHorizontalIcon />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-48">
+                    {others.length > 0 && (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>
+                          <FolderInputIcon /> Move to space
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="min-w-48">
+                          {others.map((sp) => (
+                            <DropdownMenuItem key={sp.id} onSelect={() => onMove(p, sp)}>
+                              <span className="w-5 text-center" aria-hidden>
+                                {sp.icon}
+                              </span>
+                              <span className="truncate">{sp.name}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    )}
+                    <DropdownMenuItem variant="destructive" onSelect={() => onRemove(p)}>
+                      <Trash2Icon /> Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </span>
             </div>
             {open && kids.length > 0 && <Tree {...props} parent={p.id} depth={depth + 1} />}

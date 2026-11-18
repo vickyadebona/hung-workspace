@@ -1,8 +1,9 @@
 ---
 import Base from '../layouts/Base.astro';
 import Workspace from '../components/Workspace';
-import { ensureWelcome } from '../lib/seed';
-await ensureWelcome();
+import { workspaceFor } from '../lib/workspace';
+// Create the person's Personal space (and the shared HQ space, once) before the page loads.
+await workspaceFor(Astro.locals.user).spaces();
 const user = Astro.locals.user;
 ---
 <Base>

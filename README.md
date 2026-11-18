@@ -36,8 +36,22 @@ While developing, `npm run dev` gives instant reloads.
 
 - `content/<id>.md`: one file per page, with title, parent and icon as frontmatter at the top. Open them in any editor.
 - `content/.trash/`: deleted pages are moved here, not erased.
+- `content/.spaces.json`: the list of spaces and who is in them. Each page file records its space in a `space:` line (files from before Phase 4 have none and count as TerraScape HQ).
 - Nesting is stored as a `parent` id, so moving a page never renames files.
 - A **database** is a page with `kind: database` plus its properties (`schema`) and saved views (`views`) in the frontmatter. Each **row** is its own page file with `database: <id>` and `props:` (values keyed by property id), so rows can hold full notes too. Select values store option ids, so renaming an option never breaks rows.
+
+## Spaces and privacy (Phase 4)
+
+Every page lives in exactly one **space**:
+
+- **Personal**: each person gets a private space the first time they sign in. Only that person can see it.
+- **Shared spaces**: a space with a member list, for a project or a team. The existing pages (the TerraScape HQ import, Welcome, test database) live in a shared space called **TerraScape HQ** that both of you belong to.
+
+Use the space name at the top of the sidebar to switch. **New shared space** creates one; you become its owner and add people from **Settings → Spaces** (only emails already in `ALLOWED_EMAILS` can be added). Hover a page and use **⋯ → Move to space** to move it, with its sub-pages (a database moves with its rows). Search covers every space you belong to.
+
+How it is enforced: every request goes through one access layer (`src/lib/access.ts`), so a page outside your spaces behaves exactly like a page that doesn't exist, whether you look it up, search for it, edit it, move it or export it. This is privacy **inside the app**: whoever holds the database or the files (you, as the person running it) could still read everything.
+
+Backups leave **Personal spaces out on purpose**, so one person's private notes never land in someone else's backup folder. Each person can take their own copy from **Settings → Spaces → Export** (a `.tar.gz` of plain Markdown files).
 
 ## Databases (Phase 2)
 
@@ -50,7 +64,7 @@ Your pages live in `content/`, which git deliberately leaves out, so they are ba
 - `~/Backups/hung-workspace/` on this Mac, and
 - `My Drive/Hung Workspace Backups/` in Google Drive (needs Google Drive for desktop; skipped if it isn't installed).
 
-Nothing is written when no page has changed. It keeps every backup from the last 2 days, then the newest of each day for 30 days.
+Nothing is written when no page has changed. It keeps every backup from the last 2 days, then the newest of each day for 30 days. Only **shared spaces** are included (never anyone's Personal space, and not the trash).
 
 ```bash
 scripts/backup-schedule.sh install     # turn the hourly job on (already done on this Mac; needs Node 22)
@@ -64,7 +78,7 @@ npm run backup -- restore ~/Backups/hung-workspace/<file>.tar.gz
 
 `restore` unpacks into a **new** folder (`content-restored-<time>/`) and never overwrites your current pages; look it over, then swap it in for `content/`. Each backup is a plain archive of Markdown files, so you can also open one by double-clicking it.
 
-Once the app runs online, your pages are in the database instead. Run `DATABASE_URL=... npm run backup` to back those up the same way.
+Once the app runs online, your pages are in the database instead. Run `DATABASE_URL=... npm run backup` to back those up the same way (shared spaces only).
 
 ## How two people don't overwrite each other
 

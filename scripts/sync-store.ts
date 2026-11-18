@@ -34,4 +34,6 @@ for (const m of metas) {
   await to.import(page);
   n++;
 }
+// Spaces (who is in what) travel with the pages.
+for (const space of await from.listSpaces()) await to.saveSpace(space);
 console.log(`${mode === 'up' ? 'Uploaded' : 'Downloaded'} ${n} of ${metas.length} pages (${mode === 'up' ? `${dir} -> database` : `database -> ${dir}`}).`);

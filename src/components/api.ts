@@ -2,8 +2,19 @@ import type { PropertyDef, Props, View } from '../lib/dbschema';
 
 export type { PropertyDef, Props, View };
 
+export interface Space {
+  id: string;
+  name: string;
+  icon: string;
+  kind: 'personal' | 'shared';
+  owner: string;
+  members: string[];
+  createdAt: string;
+}
+
 export interface PageMeta {
   id: string;
+  space: string;
   title: string;
   parent: string | null;
   icon: string;
@@ -45,6 +56,14 @@ async function call<T>(url: string, init?: RequestInit): Promise<{ status: numbe
   return { status: res.status, data };
 }
 
+export interface SearchHit {
+  id: string;
+  title: string;
+  snippet: string;
+  space: string;
+  database?: string | null;
+}
+
 export type UpdateResult = { ok: true; page: Page } | { ok: false; conflict: boolean; error: string; current?: Page };
 
 export const api = {
@@ -60,6 +79,7 @@ export const api = {
     return r.status === 200 ? r.data : null;
   },
   async create(input: {
+    space?: string | null;
     title?: string;
     parent?: string | null;
     icon?: string;
@@ -83,8 +103,24 @@ export const api = {
     const r = await call<{ removed?: string[] }>(`/api/pages/${id}`, { method: 'DELETE' });
     return r.data.removed ?? [];
   },
-  async search(q: string): Promise<{ id: string; title: string; snippet: string; database?: string | null }[]> {
-    return (await call<{ results: { id: string; title: string; snippet: string; database?: string | null }[] }>(`/api/search?q=${encodeURIComponent(q)}`)).data
-      .results;
+  async search(q: string): Promise<SearchHit[]> {
+    return (await call<{ results: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`)).data.results;
+  },
+  async spaces(): Promise<{ spaces: Space[]; personal: string; me: string }> {
+    return (await call<{ spaces: Space[]; personal: string; me: string }>('/api/spaces')).data;
+  },
+  async createSpace(name: string, icon?: string): Promise<Space> {
+    const r = await call<{ space?: Space; error?: string }>('/api/spaces', { method: 'POST', body: JSON.stringify({ name, icon }) });
+    if (r.status !== 201 || !r.data.space) throw new Error(r.data.error ?? 'Could not create the space');
+    return r.data.space;
+  },
+  async updateSpace(id: string, patch: { name?: string; icon?: string; addMember?: string; removeMember?: string }): Promise<{ ok: true; space: Space } | { ok: false; error: string }> {
+    const r = await call<{ space?: Space; error?: string }>(`/api/spaces/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
+    return r.status === 200 && r.data.space ? { ok: true, space: r.data.space } : { ok: false, error: r.data.error ?? 'Could not save' };
+  },
+  async movePage(id: string, space: string): Promise<string[]> {
+    const r = await call<{ moved?: string[]; error?: string }>(`/api/pages/${id}/move`, { method: 'POST', body: JSON.stringify({ space }) });
+    if (r.status !== 200) throw new Error(r.data.error ?? 'Could not move the page');
+    return r.data.moved ?? [];
   },
 };

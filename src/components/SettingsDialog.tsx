@@ -1,17 +1,21 @@
-import { useState, type ReactNode } from 'react';
-import { LogOutIcon, MonitorIcon, MoonIcon, SlidersHorizontalIcon, SunIcon, UserIcon, type LucideIcon } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { FoldersIcon, LogOutIcon, MonitorIcon, MoonIcon, SlidersHorizontalIcon, SunIcon, UserIcon, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Theme, ThemePref } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import type { Space } from './api';
+import SpacesSettings from './SpacesSettings';
 
-type Section = 'account' | 'preferences';
+export type SettingsSection = 'account' | 'preferences' | 'spaces';
+type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon; blurb: string }[] = [
   { id: 'account', label: 'My account', icon: UserIcon, blurb: 'Who you are signed in as.' },
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontalIcon, blurb: 'How the workspace looks for you.' },
+  { id: 'spaces', label: 'Spaces', icon: FoldersIcon, blurb: 'Your Personal space and the shared spaces you are in.' },
 ];
 
 const THEMES: { value: ThemePref; label: string; icon: LucideIcon }[] = [
@@ -26,6 +30,12 @@ interface Props {
   user: { name: string; email: string };
   theme: Theme;
   onSignOut: () => void;
+  spaces: Space[];
+  /** Which section to show each time the window opens. */
+  openSection?: SettingsSection;
+  onSpaceChange: (space: Space) => void;
+  onLeftSpace: (id: string) => void;
+  onNewSpace: () => void;
 }
 
 export function Avatar({ name, className }: { name: string; className?: string }) {
@@ -50,8 +60,11 @@ function Row({ title, description, children }: { title: string; description?: st
 }
 
 /** Settings window: sections down the left, the chosen section on the right. */
-export default function SettingsDialog({ open, onOpenChange, user, theme, onSignOut }: Props) {
-  const [section, setSection] = useState<Section>('preferences');
+export default function SettingsDialog({ open, onOpenChange, user, theme, onSignOut, spaces, openSection = 'preferences', onSpaceChange, onLeftSpace, onNewSpace }: Props) {
+  const [section, setSection] = useState<Section>(openSection);
+  useEffect(() => {
+    if (open) setSection(openSection);
+  }, [open, openSection]);
   const current = SECTIONS.find((s) => s.id === section)!;
 
   return (
@@ -101,6 +114,8 @@ export default function SettingsDialog({ open, onOpenChange, user, theme, onSign
               </Select>
             </Row>
           )}
+
+          {section === 'spaces' && <SpacesSettings spaces={spaces} me={user.email} onSpaceChange={onSpaceChange} onLeft={onLeftSpace} onNew={onNewSpace} />}
 
           {section === 'account' && (
             <>

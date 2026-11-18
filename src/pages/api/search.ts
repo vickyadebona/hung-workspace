@@ -1,5 +1,11 @@
 import type { APIRoute } from 'astro';
-import { getStore } from '../../lib/store';
-import { json } from '../../lib/http';
+import { workspaceFor } from '../../lib/workspace';
+import { fail, json } from '../../lib/http';
 
-export const GET: APIRoute = async ({ url }) => json({ results: await getStore().search(url.searchParams.get('q') ?? '') });
+export const GET: APIRoute = async ({ url, locals }) => {
+  try {
+    return json({ results: await workspaceFor(locals.user).search(url.searchParams.get('q') ?? '') });
+  } catch (e) {
+    return fail(e);
+  }
+};

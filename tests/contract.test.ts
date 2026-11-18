@@ -100,7 +100,7 @@ for (const [name, make] of Object.entries(makers)) {
   });
 
   t('import keeps ids and timestamps; re-import replaces', async (s) => {
-    const page = { id: 'abcdef0123456789', title: 'Old', parent: null, icon: '🌿', order: 3, createdAt: '2020-01-02T03:04:05.000Z', updatedAt: '2021-01-02T03:04:05.000Z', kind: 'page' as const, database: null, props: {}, body: 'text' };
+    const page = { id: 'abcdef0123456789', space: 'terrascapehq', title: 'Old', parent: null, icon: '🌿', order: 3, createdAt: '2020-01-02T03:04:05.000Z', updatedAt: '2021-01-02T03:04:05.000Z', kind: 'page' as const, database: null, props: {}, body: 'text' };
     await s.import(page);
     const got = await s.get(page.id);
     assert.deepEqual({ ...got, body: got?.body.trim() }, page);

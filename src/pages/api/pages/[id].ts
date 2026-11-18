@@ -1,14 +1,14 @@
 import type { APIRoute } from 'astro';
 import { ConflictError, type UpdatePatch } from '../../../lib/storage';
-import { getStore } from '../../../lib/store';
-import { json, readJson, str } from '../../../lib/http';
+import { workspaceFor } from '../../../lib/workspace';
+import { fail, json, readJson, str } from '../../../lib/http';
 
-export const GET: APIRoute = async ({ params }) => {
-  const page = await getStore().get(params.id ?? '');
+export const GET: APIRoute = async ({ params, locals }) => {
+  const page = await workspaceFor(locals.user).get(params.id ?? '');
   return page ? json({ page }) : json({ error: 'Not found' }, 404);
 };
 
-export const PUT: APIRoute = async ({ params, request }) => {
+export const PUT: APIRoute = async ({ params, request, locals }) => {
   const body = await readJson(request);
   if (!body) return json({ error: 'Invalid JSON' }, 400);
   const patch: UpdatePatch = {};
@@ -21,15 +21,19 @@ export const PUT: APIRoute = async ({ params, request }) => {
   if (body.schema !== undefined) patch.schema = body.schema;
   if (body.views !== undefined) patch.views = body.views;
   try {
-    const page = await getStore().update(params.id ?? '', patch, { baseUpdatedAt: str(body.baseUpdatedAt) });
+    const page = await workspaceFor(locals.user).update(params.id ?? '', patch, { baseUpdatedAt: str(body.baseUpdatedAt) });
     return json({ page });
   } catch (e: any) {
     if (e instanceof ConflictError) return json({ error: 'conflict', current: e.current }, 409);
-    return json({ error: e.message }, e.message === 'Page not found' ? 404 : 400);
+    return fail(e, e.message === 'Page not found' ? 404 : 400);
   }
 };
 
-export const DELETE: APIRoute = async ({ params }) => {
-  const removed = await getStore().remove(params.id ?? '');
-  return removed.length ? json({ removed }) : json({ error: 'Not found' }, 404);
+export const DELETE: APIRoute = async ({ params, locals }) => {
+  try {
+    const removed = await workspaceFor(locals.user).remove(params.id ?? '');
+    return removed.length ? json({ removed }) : json({ error: 'Not found' }, 404);
+  } catch (e) {
+    return fail(e);
+  }
 };

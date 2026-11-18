@@ -18,11 +18,12 @@ interface DialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: ReactNode;
+  confirmLabel?: string;
   onConfirm: () => void;
 }
 
 /** "Are you sure?" dialog shown before anything is deleted. */
-export function ConfirmDeleteDialog({ open, onOpenChange, title, description, onConfirm }: DialogProps) {
+export function ConfirmDeleteDialog({ open, onOpenChange, title, description, confirmLabel = 'Delete', onConfirm }: DialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent size="sm">
@@ -33,7 +34,7 @@ export function ConfirmDeleteDialog({ open, onOpenChange, title, description, on
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            Delete
+            {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
