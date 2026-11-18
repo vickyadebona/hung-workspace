@@ -80,6 +80,8 @@ export default function PropEditor({ def, value, onChange, onCreateOption, ctx =
       return <RelationEditor def={def} value={value} onChange={onChange} ctx={ctx} />;
     case 'rollup':
       return <RollupCell def={def} value={value} />;
+    case 'formula':
+      return <FormulaCell value={value} />;
   }
 }
 
@@ -327,6 +329,24 @@ export function RollupCell({ def, value }: { def: PropertyDef; value: PropValue 
         </span>
         {value}%
       </span>
+    );
+  }
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return <span className="px-1.5 text-sm">{new Date(value + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>;
+  }
+  return <span className="px-1.5 text-sm">{String(value)}</span>;
+}
+
+/** A formula's result (read only): a number, text, a date, or a tick for true/false. */
+export function FormulaCell({ value }: { value: PropValue }) {
+  if (value === null || value === undefined) return <span className="px-1.5 text-sm text-muted-foreground">—</span>;
+  if (typeof value === 'boolean') {
+    return value ? (
+      <span className="inline-flex items-center gap-1 px-1.5 text-sm">
+        <CheckIcon className="size-3.5 text-primary" /> Yes
+      </span>
+    ) : (
+      <span className="px-1.5 text-sm text-muted-foreground">No</span>
     );
   }
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {

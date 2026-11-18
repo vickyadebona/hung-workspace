@@ -18,6 +18,7 @@ import {
   type View,
   type ViewType,
 } from '../lib/dbschema';
+import { checkFormula, FORMULA_FUNCTIONS } from '../lib/formula';
 import type { PageMeta } from './api';
 import type { CellCtx } from './cells';
 import { CalendarDaysIcon, KanbanIcon, ListIcon, MoreHorizontalIcon, PlusIcon, Settings2Icon, TableIcon, Trash2Icon, XIcon, type LucideIcon } from 'lucide-react';
@@ -26,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DeleteButton from './ConfirmDelete';
 import Popover, { MenuLabel, MenuNote } from './Popover';
@@ -348,7 +350,7 @@ function SortEditor({ schema, view, onChange }: { schema: PropertyDef[]; view: V
 /* ----------------------------- properties ----------------------------- */
 
 /** What an existing property can be changed into. Relations and rollups need setting up, so they are only offered when adding. */
-const typeOptions = PROP_TYPES.filter((t) => t !== 'relation' && t !== 'rollup').map((t) => ({ value: t, label: typeLabel(t) }));
+const typeOptions = PROP_TYPES.filter((t) => t !== 'relation' && t !== 'rollup' && t !== 'formula').map((t) => ({ value: t, label: typeLabel(t) }));
 const newTypeOptions = PROP_TYPES.map((t) => ({ value: t, label: typeLabel(t) }));
 
 const ROLLUP_LABEL: Record<RollupFn, string> = {
@@ -399,6 +401,10 @@ function PropertiesMenu({
   const [twoWay, setTwoWay] = useState(true);
   const [single, setSingle] = useState(false);
   const [reverseName, setReverseName] = useState('');
+  // formula settings
+  const [formulaText, setFormulaText] = useState('');
+  const propNames = ['Name', ...schema.map((d) => d.name)];
+  const formulaError = newType === 'formula' && formulaText.trim() ? checkFormula(formulaText, propNames) : null;
   // rollup settings
   const relations = schema.filter((d) => d.type === 'relation');
   const [rollRel, setRollRel] = useState('');
@@ -436,6 +442,13 @@ function PropertiesMenu({
       return;
     }
     if (!name) return;
+    if (newType === 'formula') {
+      if (checkFormula(formulaText, propNames)) return;
+      onChange([...schema, { id: uid(), name, type: 'formula', formula: { expression: formulaText.trim() } }]);
+      setNewName('');
+      setFormulaText('');
+      return;
+    }
     if (newType === 'rollup') {
       if (!rollupReady || !activeRel) return;
       onChange([
@@ -456,7 +469,14 @@ function PropertiesMenu({
     setNewName('');
   };
 
-  const canAdd = newType === 'relation' ? true : newType === 'rollup' ? !!newName.trim() && rollupReady : !!newName.trim();
+  const canAdd =
+    newType === 'relation'
+      ? true
+      : newType === 'rollup'
+        ? !!newName.trim() && rollupReady
+        : newType === 'formula'
+          ? !!newName.trim() && !!formulaText.trim() && !checkFormula(formulaText, propNames)
+          : !!newName.trim();
 
   return (
     <>
@@ -466,13 +486,13 @@ function PropertiesMenu({
         <span className="text-xs text-muted-foreground">Title (always there)</span>
       </div>
       {schema.map((d) => {
-        const derivedType = d.type === 'relation' || d.type === 'rollup';
+        const derivedType = d.type === 'relation' || d.type === 'rollup' || d.type === 'formula';
         return (
           <div key={d.id} className="border-b py-1 last:border-b-0">
             <div className={rowCls}>
               <NameInput value={d.name} onCommit={(name) => name && patch(d.id, { name })} />
               {derivedType ? (
-                <span className="w-32 flex-none truncate text-xs text-muted-foreground" title={d.type === 'relation' ? dbName(d.relation!.database) : 'Calculated from linked rows'}>
+                <span className="w-32 flex-none truncate text-xs text-muted-foreground" title={d.type === 'relation' ? dbName(d.relation!.database) : d.type === 'formula' ? 'Calculated from this row' : 'Calculated from linked rows'}>
                   {typeLabel(d.type)}
                   {d.type === 'relation' ? ` → ${dbName(d.relation!.database).replace(' (sub-items, parents)', '')}` : ''}
                 </span>
@@ -513,6 +533,7 @@ function PropertiesMenu({
               />
             </div>
             {openId === d.id && (d.type === 'select' || d.type === 'multiselect') && <OptionsEditor def={d} onChange={(options) => patch(d.id, { options })} />}
+            {d.type === 'formula' && <FormulaEditor def={d} names={propNames.filter((n) => n !== d.name)} onCommit={(expression) => patch(d.id, { formula: { expression } })} />}
           </div>
         );
       })}
@@ -552,6 +573,26 @@ function PropertiesMenu({
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={single} onCheckedChange={(c) => setSingle(c === true)} /> Only one linked row (like a parent)
             </label>
+          </>
+        )}
+
+        {newType === 'formula' && (
+          <>
+            <Textarea
+              aria-label="Formula"
+              className="min-h-16 font-mono text-xs"
+              placeholder={'e.g. prop("Price") * prop("Quantity")'}
+              value={formulaText}
+              onChange={(e) => setFormulaText(e.target.value)}
+            />
+            {formulaError ? (
+              <div className="text-xs text-destructive" role="alert">
+                {formulaError}
+              </div>
+            ) : formulaText.trim() ? (
+              <div className="text-xs text-muted-foreground">Looks good.</div>
+            ) : null}
+            <FormulaHelp names={propNames} />
           </>
         )}
 
@@ -621,6 +662,55 @@ function PropertiesMenu({
         </Button>
       </div>
     </>
+  );
+}
+
+/** Edit an existing formula in place; only a formula that reads correctly is saved. */
+function FormulaEditor({ def, names, onCommit }: { def: PropertyDef; names: string[]; onCommit: (expression: string) => void }) {
+  const [text, setText] = useState(def.formula?.expression ?? '');
+  const error = text.trim() ? checkFormula(text, names) : 'Write a formula';
+  return (
+    <div className="flex flex-col gap-1 py-1.5 pl-3">
+      <Textarea
+        aria-label={`Formula for ${def.name}`}
+        className="min-h-14 font-mono text-xs"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          const v = text.trim();
+          if (!error && v !== def.formula?.expression) onCommit(v);
+          else if (error) setText(def.formula?.expression ?? '');
+        }}
+      />
+      {error && (
+        <div className="text-xs text-destructive" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A short reminder of what formulas can do, kept out of the way until asked for. */
+function FormulaHelp({ names }: { names: string[] }) {
+  return (
+    <details className="text-xs text-muted-foreground">
+      <summary className="cursor-pointer">What can I write?</summary>
+      <div className="mt-1 flex flex-col gap-1">
+        <p>
+          Use a property with <code>prop("Name")</code>. Combine with <code>+ - * / %</code>, compare with <code>{'== != < > <= >='}</code>, and <code>and</code> / <code>or</code> / <code>not</code>.
+        </p>
+        <p>
+          <code>{'if(prop("Done"), "finished", "to do")'}</code>
+          <br />
+          <code>{'dateBetween(prop("Due"), today(), "days")'}</code>
+          <br />
+          <code>{'round(prop("Price") * 1.08, 2)'}</code>
+        </p>
+        <p>Properties here: {names.join(', ')}</p>
+        <p>Functions: {FORMULA_FUNCTIONS.join(', ')}</p>
+      </div>
+    </details>
   );
 }
 

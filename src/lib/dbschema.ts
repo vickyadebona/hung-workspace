@@ -4,7 +4,9 @@
  * whose `props` hold one value per property. Nothing here touches the disk or the DOM.
  */
 
-export const PROP_TYPES = ['text', 'number', 'select', 'multiselect', 'date', 'checkbox', 'url', 'person', 'relation', 'rollup'] as const;
+import { FDate, FormulaError, runFormula, type FValue } from './formula.ts';
+
+export const PROP_TYPES = ['text', 'number', 'select', 'multiselect', 'date', 'checkbox', 'url', 'person', 'relation', 'rollup', 'formula'] as const;
 export type PropType = (typeof PROP_TYPES)[number];
 
 export const COLORS = ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'] as const;
@@ -46,11 +48,12 @@ export interface PropertyDef {
   options?: SelectOption[]; // select / multiselect only
   relation?: RelationConfig; // relation only
   rollup?: RollupConfig; // rollup only
+  formula?: { expression: string }; // formula only
 }
 
 /** True for properties whose values are worked out from other rows rather than stored on the row. */
 export function isDerived(def: PropertyDef): boolean {
-  return def.type === 'rollup' || (def.type === 'relation' && !!def.relation?.reverseOf);
+  return def.type === 'rollup' || def.type === 'formula' || (def.type === 'relation' && !!def.relation?.reverseOf);
 }
 
 /**
@@ -138,6 +141,7 @@ export function typeLabel(t: PropType | 'title'): string {
       person: 'Person',
       relation: 'Relation',
       rollup: 'Rollup',
+      formula: 'Formula',
     } as const
   )[t];
 }
@@ -214,6 +218,13 @@ export function sanitizeSchema(input: unknown): PropertyDef[] {
       def.rollup = { relation: r.relation, fn: r.fn as RollupFn };
       if (typeof r.target === 'string' && ID_RE.test(r.target)) def.rollup.target = r.target;
       if (Array.isArray(r.options)) def.rollup.options = r.options.filter((o): o is string => typeof o === 'string' && ID_RE.test(o)).slice(0, MAX_OPTIONS);
+    }
+    if (type === 'formula') {
+      const f = isObj(raw.formula) ? raw.formula : {};
+      const expression = typeof f.expression === 'string' ? f.expression.trim() : '';
+      if (!expression) throw new Error('A formula needs an expression');
+      if (expression.length > 1000) throw new Error('A formula can be at most 1000 characters');
+      def.formula = { expression };
     }
     return def;
   });
@@ -300,6 +311,7 @@ export function coerceValue(def: PropertyDef, v: unknown): PropValue {
       return limited.length ? limited : null;
     }
     case 'rollup':
+    case 'formula':
       return null; // always worked out
   }
 }
@@ -330,6 +342,8 @@ export function opsFor(type: PropType | 'title', def?: PropertyDef | null): Filt
       return ['contains', 'not_contains', 'empty', 'not_empty'];
     case 'relation':
       return ['empty', 'not_empty'];
+    case 'formula':
+      return ['is', 'contains', 'gt', 'lt', 'empty', 'not_empty', 'checked', 'unchecked'];
     case 'rollup':
       return def?.rollup?.fn === 'earliest' || def?.rollup?.fn === 'latest' ? ['is', 'before', 'after', 'empty', 'not_empty'] : ['is', 'gt', 'lt', 'empty', 'not_empty'];
     case 'title':
@@ -411,6 +425,17 @@ export function matchesFilter(row: Row, f: Filter, schema: PropertyDef[]): boole
     case 'relation': {
       const has = Array.isArray(v) && v.includes(String(f.value));
       return f.op === 'contains' ? has : !has;
+    }
+    case 'formula': {
+      if (typeof v === 'number') {
+        const n = Number(f.value);
+        if (Number.isNaN(n)) return true;
+        return f.op === 'gt' ? v > n : f.op === 'lt' ? v < n : v === n;
+      }
+      if (typeof v === 'boolean') return f.op === 'is' ? String(v) === String(f.value) : true;
+      const a = String(v ?? '').toLowerCase();
+      const b = String(f.value).toLowerCase();
+      return f.op === 'contains' ? a.includes(b) : f.op === 'gt' ? a > b : f.op === 'lt' ? a < b : a === b;
     }
     case 'rollup': {
       if (typeof v === 'string') {
@@ -561,7 +586,8 @@ export function rollupValue(def: RollupConfig, related: Row[], relatedSchema: Pr
 export function deriveRows(schema: PropertyDef[], rows: Row[], ctx: DeriveContext): Row[] {
   const reverse = schema.filter((d) => d.type === 'relation' && d.relation?.reverseOf);
   const rollups = schema.filter((d) => d.type === 'rollup' && d.rollup);
-  if (!reverse.length && !rollups.length) return rows;
+  const formulas = schema.filter((d) => d.type === 'formula' && d.formula);
+  if (!reverse.length && !rollups.length && !formulas.length) return rows;
   const out = rows.map((r) => ({ ...r, props: { ...r.props } }));
 
   for (const def of reverse) {
@@ -600,6 +626,20 @@ export function deriveRows(schema: PropertyDef[], rows: Row[], ctx: DeriveContex
       else row.props[def.id] = v;
     }
   }
+
+  // Formulas last: they may use stored values, the other side of relations, rollups and earlier formulas.
+  const today = new Date().toISOString().slice(0, 10);
+  for (const def of formulas) {
+    for (const row of out) {
+      try {
+        const v = runFormula(def.formula!.expression, { today, prop: (name) => propValue(name, schema, row, ctx) });
+        if (v === null) delete row.props[def.id];
+        else row.props[def.id] = v;
+      } catch {
+        delete row.props[def.id]; // a formula that fails for a row leaves that cell empty
+      }
+    }
+  }
   return out;
 }
 
@@ -626,4 +666,38 @@ export function nestRows(rows: Row[], parentProp: string): { row: Row; depth: nu
   for (const r of roots) walk(r, 0);
   for (const r of rows) walk(r, 0); // anything left over is part of a loop: show it flat
   return out;
+}
+
+/** A property of a row as a formula sees it: a number, text, true/false, a date, or a list. */
+function propValue(name: string, schema: PropertyDef[], row: Row, ctx: DeriveContext): FValue {
+  const key = name.trim().toLowerCase();
+  const def = schema.find((d) => d.name.toLowerCase() === key);
+  if (!def) {
+    if (key === 'name' || key === 'title') return row.title;
+    throw new FormulaError(`There is no property called "${name}"`);
+  }
+  const v = row.props[def.id] ?? null;
+  switch (def.type) {
+    case 'number':
+      return typeof v === 'number' ? v : null;
+    case 'checkbox':
+      return v === true;
+    case 'date':
+      return typeof v === 'string' && isValidDate(v) ? new FDate(v) : null;
+    case 'select':
+      return typeof v === 'string' ? (def.options?.find((o) => o.id === v)?.name ?? null) : null;
+    case 'multiselect':
+      return Array.isArray(v) ? v.map((id) => def.options?.find((o) => o.id === id)?.name ?? id) : [];
+    case 'person':
+      return Array.isArray(v) ? v : [];
+    case 'relation': {
+      const ids = Array.isArray(v) ? v : [];
+      const titles = new Map(ctx.rowsOf(def.relation?.database ?? '').map((r) => [r.id, r.title]));
+      return ids.map((id) => titles.get(id) ?? id);
+    }
+    default:
+      // text, url, rollup, formula: numbers and text as they are; a date-shaped text (a rollup or formula result) acts as a date
+      if (typeof v === 'string' && isValidDate(v) && (def.type === 'rollup' || def.type === 'formula')) return new FDate(v);
+      return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : null;
+  }
 }

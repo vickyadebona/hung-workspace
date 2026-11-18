@@ -16,7 +16,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import DeleteButton from './ConfirmDelete';
-import PropEditor, { Chip, PersonChip, RollupCell, RowChip, cellInput, isSafeUrl } from './PropEditor';
+import PropEditor, { Chip, FormulaCell, PersonChip, RollupCell, RowChip, cellInput, isSafeUrl } from './PropEditor';
 import { nameOf, titleOf, type CellCtx } from './cells';
 import SimpleSelect from './SimpleSelect';
 
@@ -76,6 +76,8 @@ export function ValueView({ def, value, ctx }: { def: PropertyDef; value: PropVa
       );
     case 'rollup':
       return <RollupCell def={def} value={value} />;
+    case 'formula':
+      return <FormulaCell value={value} />;
     case 'date':
       return (
         <span className={meta}>

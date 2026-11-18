@@ -98,6 +98,8 @@ In a database, **Properties → New property** now also offers:
 - **Rollup**: summarise the rows a relation points at: count, percent checked, percent with a status (e.g. Done), sum, average, smallest, largest, earliest or latest date. Rollups are worked out on the fly and are read-only; you can filter and sort on them.
 - **Sub-items**: add a relation from a database to *itself* with "Only one linked row" (call it Parent) and the other side Sub-items. Then, in the view's **⋯** menu, choose "Nest under Parent" and the table or list shows sub-items indented under their parents, with a "+" to add one.
 
+- **Formula**: a value worked out for each row from its other properties, for example `prop("Price") * prop("Quantity")` or `if(prop("Done"), "finished", "to do")` or `dateBetween(prop("Due"), today(), "days")`. Use `prop("Name")` for a property; combine with `+ - * / %`, compare with `== != < > <= >=`, and use `and` / `or` / `not`. There are functions for text (`concat`, `upper`, `lower`, `contains`, `replace`, `substring`, `join`, `length`), numbers (`round`, `floor`, `ceil`, `abs`, `min`, `max`, `sum`, `pow`, `sqrt`, `toNumber`) and dates (`today`, `date`, `dateAdd`, `dateSubtract`, `dateBetween`, `year`, `month`, `day`, `formatDate`). A formula can use rollups and formulas defined before it. It is checked as you type, and a formula that can't be worked out for a row just leaves that cell empty. Formulas run in a small interpreter (no code is ever executed), so they are safe to share.
+
 Relations never cross spaces, and a database that is linked to another can't be moved to a different space on its own. Worked-out columns (the other side of a relation, rollups) are never stored in the files, so they can't go out of date.
 
 For pages: every page shows a **breadcrumb** above its title. In the editor, type **/page** to create a page inside the current one; it appears right there in the text as a block with its icon and current name (rename the page and the block follows), and clicking it opens the page. In the file it is stored as a line holding just a link, `[📄 Title](/p/<id>)`. Deleting the block only removes the reference; the page stays in the sidebar, and any pages inside a page that aren't shown in its text (for example ones made with the sidebar's **+**) are listed under "Pages inside this page". (Putting a whole database inline in a page is not built yet.)
@@ -117,7 +119,7 @@ npx astro check   # types
 
 ## Not yet (planned)
 
-Formulas, a timeline view and a "My tasks" page, comments and @mentions, row templates and recurring tasks, inline databases inside pages, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
+A timeline view, comments and @mentions, row templates and recurring tasks, inline databases inside pages, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
 
 ## Put it on Vercel (shared with Andrew)
 
