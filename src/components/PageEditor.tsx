@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useCreateBlockNote } from '@blocknote/react';
+import { filterSuggestionItems } from '@blocknote/core';
+import { SuggestionMenuController, getDefaultReactSlashMenuItems, useCreateBlockNote } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/mantine/style.css';
 import { cn } from '@/lib/utils';
 import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { api, type Page } from './api';
+import { ChevronRightIcon, FileTextIcon, PlusIcon, Table2Icon } from 'lucide-react';
+import { api, type Page, type PageMeta } from './api';
 
 type SaveState = 'saved' | 'saving' | 'error' | 'conflict';
 
@@ -16,11 +18,19 @@ interface Props {
   onMeta: (id: string, patch: { title?: string; icon?: string; updatedAt?: string }) => void;
   onReload: () => void;
   extra?: ReactNode;
+  /** Pages above this one, outermost first (for the breadcrumb). */
+  ancestors?: PageMeta[];
+  /** Pages directly inside this one. */
+  subpages?: PageMeta[];
+  spaceName?: string;
+  onOpen?: (id: string) => void;
+  /** Called after a sub-page has been created, so the sidebar can refresh and the new page can open. */
+  onSubCreated?: (child: Page) => void;
 }
 
 const SAVE_DELAY_MS = 800;
 
-export default function PageEditor({ page, theme, onMeta, onReload, extra }: Props) {
+export default function PageEditor({ page, theme, onMeta, onReload, extra, ancestors = [], subpages = [], spaceName, onOpen, onSubCreated }: Props) {
   const editor = useCreateBlockNote();
   const [title, setTitle] = useState(page.title);
   const [icon, setIcon] = useState(page.icon);
@@ -96,6 +106,46 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra }: Pro
     };
   }, [save]);
 
+  /** Make a page inside this one. With a block, also leave a link to it in the text where the cursor is. */
+  const createSub = async (withLink: boolean) => {
+    if (blocked.current) return;
+    const child = await api.create({ parent: page.id, title: 'Untitled' });
+    if (withLink) {
+      const here = editor.getTextCursorPosition().block;
+      editor.insertBlocks([{ type: 'paragraph', content: [{ type: 'link', href: `/p/${child.id}`, content: '📄 Untitled' }] }], here, 'after');
+    }
+    onSubCreated?.(child);
+  };
+
+  const slashItems = async (query: string) =>
+    filterSuggestionItems(
+      [
+        ...getDefaultReactSlashMenuItems(editor),
+        {
+          title: 'Sub-page',
+          subtext: 'Create a page inside this one and link to it here',
+          aliases: ['page', 'subpage', 'sub-page', 'new page'],
+          group: 'Basic blocks',
+          onItemClick: () => {
+            void createSub(true);
+          },
+        },
+      ],
+      query,
+    );
+
+  // A link to another page in this workspace opens inside the app instead of reloading it.
+  const followLinks = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest?.('a[href^="/p/"]');
+    if (!a || !onOpen) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    const id = a.getAttribute('href')!.slice(3).split(/[/?#]/)[0];
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onOpen(id);
+  };
+
   const label: Record<SaveState, string> = {
     saved: 'Saved',
     saving: 'Saving…',
@@ -109,6 +159,20 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra }: Pro
         <Banner action={<Button size="sm" variant="outline" onClick={onReload}>Load latest</Button>}>
           This page was changed on another device or by someone else, so saving is paused to protect their changes.
         </Banner>
+      )}
+      {ancestors.length > 0 && (
+        <nav aria-label="Breadcrumb" className="mb-2 flex flex-wrap items-center gap-0.5 text-sm text-muted-foreground md:pl-[54px]">
+          {spaceName && <span className="px-1.5">{spaceName}</span>}
+          {ancestors.map((a) => (
+            <span key={a.id} className="flex items-center gap-0.5">
+              {(spaceName || a !== ancestors[0]) && <ChevronRightIcon className="size-3.5" aria-hidden />}
+              <Button variant="ghost" size="xs" className="h-6 max-w-48 text-muted-foreground" onClick={() => onOpen?.(a.id)}>
+                <span aria-hidden>{a.icon}</span>
+                <span className="truncate">{a.title || 'Untitled'}</span>
+              </Button>
+            </span>
+          ))}
+        </nav>
       )}
       <div className="mb-3 flex items-center gap-2 md:pl-[54px]">
         <input
@@ -141,7 +205,32 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra }: Pro
         </span>
       </div>
       {extra}
-      <BlockNoteView editor={editor} theme={theme} onChange={schedule} />
+      <div onClickCapture={followLinks}>
+        <BlockNoteView editor={editor} theme={theme} onChange={schedule} slashMenu={false}>
+          <SuggestionMenuController triggerCharacter="/" getItems={slashItems} />
+        </BlockNoteView>
+      </div>
+
+      <section aria-label="Sub-pages" className="mt-8 border-t pt-4">
+        {subpages.length > 0 && (
+          <>
+            <h2 className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">Sub-pages</h2>
+            <ul className="mb-2">
+              {subpages.map((c) => (
+                <li key={c.id}>
+                  <Button variant="ghost" size="sm" className="w-full justify-start font-normal" onClick={() => onOpen?.(c.id)}>
+                    {c.icon ? <span aria-hidden>{c.icon}</span> : c.kind === 'database' ? <Table2Icon className="text-muted-foreground" /> : <FileTextIcon className="text-muted-foreground" />}
+                    <span className="truncate">{c.title || 'Untitled'}</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void createSub(false)}>
+          <PlusIcon /> Add a sub-page
+        </Button>
+      </section>
     </div>
   );
 }

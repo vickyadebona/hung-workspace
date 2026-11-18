@@ -5,6 +5,7 @@ import type { PropValue } from '../lib/dbschema';
 import { api, type Page } from './api';
 import { addOption } from './dbops';
 import PropEditor from './PropEditor';
+import { useCellCtx } from './cells';
 
 interface Props {
   row: Page;
@@ -19,11 +20,16 @@ export default function RowProps({ row, db, onOpenDb, onDb }: Props) {
   const [dbState, setDbState] = useState(db);
   const [failed, setFailed] = useState(false);
   const schema = dbState.schema ?? [];
+  const ctx = useCellCtx(db.id, dbState.schema, db.space);
 
   const change = async (propId: string, v: PropValue) => {
     setValues((p) => ({ ...p, [propId]: v }));
     const res = await api.update(row.id, { props: { [propId]: v } }).catch(() => null);
     setFailed(!res || !res.ok);
+    if (res && res.ok && schema.find((d) => d.id === propId)?.type === 'relation') {
+      const fresh = await api.get(row.id);
+      if (fresh) setValues(fresh.props);
+    }
   };
 
   const create = async (propId: string, name: string) => {
@@ -45,7 +51,7 @@ export default function RowProps({ row, db, onOpenDb, onDb }: Props) {
             <div key={d.id} className="grid grid-cols-[100px_1fr] items-center md:grid-cols-[140px_1fr]">
               <dt className="truncate text-sm text-muted-foreground">{d.name}</dt>
               <dd className="max-w-sm">
-                <PropEditor def={d} value={values[d.id] ?? null} onChange={(v) => change(d.id, v)} onCreateOption={create} />
+                <PropEditor def={d} value={values[d.id] ?? null} onChange={(v) => change(d.id, v)} onCreateOption={create} ctx={ctx} />
               </dd>
             </div>
           ))}

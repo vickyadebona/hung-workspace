@@ -40,7 +40,9 @@ import PageEditor from './PageEditor';
 import RowProps from './RowProps';
 import SearchModal from './SearchModal';
 import NewSpaceDialog from './NewSpaceDialog';
+import { PageSkeleton, SidebarSkeleton } from './Skeletons';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
+import { WorkspaceDataProvider } from './workspace-context';
 
 interface Props {
   initialId: string | null;
@@ -76,12 +78,14 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   const [rowDb, setRowDb] = useState<Page | null>(null);
   const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false); // the server could not be reached
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('preferences');
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [personalId, setPersonalId] = useState<string | null>(null);
+  const [people, setPeople] = useState<Record<string, string>>({});
   const [activeSpace, setActiveSpaceState] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<PageMeta | null>(null);
   const logoutForm = useRef<HTMLFormElement>(null);
@@ -143,6 +147,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     Promise.all([api.spaces(), refreshList()]).then(([sp, list]) => {
       setSpaces(sp.spaces);
       setPersonalId(sp.personal);
+      setPeople(sp.people ?? {});
       if (idFromPath()) return; // the page's own space is picked once it loads
       let saved: string | null = null;
       try {
@@ -155,6 +160,9 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
       const first = firstPage(list, space);
       if (first) go(first.id, true);
       else setLoading(false);
+    }).catch(() => {
+      setLoadError(true);
+      setLoading(false);
     });
   }, [refreshList, go, setActiveSpace]);
 
@@ -163,6 +171,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     if (!currentId) return;
     let cancelled = false;
     setLoading(true);
+    setLoadError(false);
     setMissing(false);
     api.get(currentId).then(async (p) => {
       const parentDb = p?.database ? await api.get(p.database) : null;
@@ -185,6 +194,10 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           return next;
         });
       }
+    }).catch(() => {
+      if (cancelled) return;
+      setLoadError(true);
+      setLoading(false);
     });
     return () => {
       cancelled = true;
@@ -305,10 +318,22 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   };
   const hasKids = (id: string) => (children.get(id) ?? []).length > 0;
   const activeInfo = spaces.find((x) => x.id === activeSpace);
+  /** The pages above a page, outermost first (stops at the top of its space). */
+  const ancestorsOf = (p: Page): PageMeta[] => {
+    if (p.database) return [];
+    const byId = new Map(pages.map((x) => [x.id, x]));
+    const chain: PageMeta[] = [];
+    let cur = p.parent ? byId.get(p.parent) : undefined;
+    while (cur && chain.length < 12) {
+      chain.unshift(cur);
+      cur = cur.parent ? byId.get(cur.parent) : undefined;
+    }
+    return chain;
+  };
   const emptyState = 'grid h-[60vh] place-items-center text-center text-muted-foreground';
 
   return (
-    <>
+    <WorkspaceDataProvider value={{ people, spaces, pages }}>
       <Sidebar>
         <SidebarHeader>
           <SidebarMenu>
@@ -368,6 +393,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           <SidebarGroup>
             <SidebarGroupLabel>{activeInfo?.kind === 'personal' ? 'My pages' : 'Pages'}</SidebarGroupLabel>
             <SidebarGroupContent>
+              {spaces.length === 0 && !loadError && <SidebarSkeleton />}
               <nav aria-label="Pages">
                 <Tree
                   parent={null}
@@ -437,8 +463,19 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           <SidebarTrigger className="text-muted-foreground" />
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
-          {loading && <div className={emptyState}>Loading…</div>}
-          {!loading && missing && (
+          {loading && !loadError && <PageSkeleton />}
+          {loadError && (
+            <div className={emptyState}>
+              <div>
+                <p>Couldn't reach the server.</p>
+                <p className="text-sm">Check your connection (or that the app is running), then try again.</p>
+                <Button className="mt-3" variant="outline" onClick={() => window.location.reload()}>
+                  Try again
+                </Button>
+              </div>
+            </div>
+          )}
+          {!loading && !loadError && missing && (
             <div className={emptyState}>
               <div>
                 <p>That page doesn't exist (it may have been deleted).</p>
@@ -448,7 +485,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && !missing && !page && (
+          {!loading && !loadError && !missing && !page && (
             <div className={emptyState}>
               <div>
                 <p>No pages yet.</p>
@@ -458,15 +495,24 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && page && page.kind === 'database' && (
+          {!loading && !loadError && page && page.kind === 'database' && (
             <DatabaseView key={page.id} dbId={page.id} onMeta={onMeta} onOpenRow={(id) => go(id)} />
           )}
-          {!loading && page && page.kind !== 'database' && (
+          {!loading && !loadError && page && page.kind !== 'database' && (
             <PageEditor
               key={`${page.id}:${reloadKey}`}
               page={page}
               theme={theme.effective}
               onMeta={onMeta}
+              ancestors={ancestorsOf(page)}
+              subpages={page.database ? [] : (children.get(page.id) ?? [])}
+              spaceName={activeInfo?.name}
+              onOpen={(id) => go(id)}
+              onSubCreated={async (child) => {
+                await refreshList();
+                setExpanded((prev) => new Set(prev).add(child.parent ?? ''));
+                go(child.id);
+              }}
               extra={page.database && rowDb ? <RowProps key={`${page.id}:${reloadKey}`} row={page} db={rowDb} onOpenDb={() => go(rowDb.id)} onDb={setRowDb} /> : undefined}
               onReload={() => {
                 refreshList();
@@ -511,7 +557,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           setDeleting(null);
         }}
       />
-    </>
+    </WorkspaceDataProvider>
   );
 }
 

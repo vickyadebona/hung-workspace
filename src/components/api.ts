@@ -106,8 +106,8 @@ export const api = {
   async search(q: string): Promise<SearchHit[]> {
     return (await call<{ results: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`)).data.results;
   },
-  async spaces(): Promise<{ spaces: Space[]; personal: string; me: string }> {
-    return (await call<{ spaces: Space[]; personal: string; me: string }>('/api/spaces')).data;
+  async spaces(): Promise<{ spaces: Space[]; personal: string; me: string; people: Record<string, string> }> {
+    return (await call<{ spaces: Space[]; personal: string; me: string; people: Record<string, string> }>('/api/spaces')).data;
   },
   async createSpace(name: string, icon?: string): Promise<Space> {
     const r = await call<{ space?: Space; error?: string }>('/api/spaces', { method: 'POST', body: JSON.stringify({ name, icon }) });
@@ -117,6 +117,13 @@ export const api = {
   async updateSpace(id: string, patch: { name?: string; icon?: string; addMember?: string; removeMember?: string }): Promise<{ ok: true; space: Space } | { ok: false; error: string }> {
     const r = await call<{ space?: Space; error?: string }>(`/api/spaces/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
     return r.status === 200 && r.data.space ? { ok: true, space: r.data.space } : { ok: false, error: r.data.error ?? 'Could not save' };
+  },
+  async addRelation(
+    dbId: string,
+    opts: { name: string; target: string; twoWay: boolean; reverseName?: string; single?: boolean },
+  ): Promise<{ ok: true; property: PropertyDef } | { ok: false; error: string }> {
+    const r = await call<{ property?: PropertyDef; error?: string }>(`/api/databases/${dbId}/relations`, { method: 'POST', body: JSON.stringify(opts) });
+    return r.status === 201 && r.data.property ? { ok: true, property: r.data.property } : { ok: false, error: r.data.error ?? 'Could not add the relation' };
   },
   async movePage(id: string, space: string): Promise<string[]> {
     const r = await call<{ moved?: string[]; error?: string }>(`/api/pages/${id}/move`, { method: 'POST', body: JSON.stringify({ space }) });

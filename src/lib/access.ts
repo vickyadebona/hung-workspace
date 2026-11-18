@@ -1,3 +1,4 @@
+import { deriveRows, isDerived, uid, type DeriveContext, type PropertyDef, type Row } from './dbschema.ts';
 import { ensureSpacesFor, personalSpaceId } from './spaces.ts';
 import {
   isValidId,
@@ -65,7 +66,27 @@ export class Workspace {
   async get(id: string): Promise<Page | null> {
     const page = await this.store.get(id);
     if (!page || !(await this.ids()).has(page.space)) return null;
-    return page;
+    return page.database ? this.withDerived(page) : page;
+  }
+
+  /**
+   * Worked-out properties (the other side of a relation, rollups) are never stored; they are calculated here from the
+   * pages in the same space whenever a row is read. Databases in another space are invisible to the calculation.
+   */
+  private deriveContext(metas: PageMeta[], space: string): DeriveContext {
+    const inSpace = metas.filter((p) => p.space === space);
+    return {
+      rowsOf: (dbId) => inSpace.filter((p) => p.database === dbId) as Row[],
+      schemaOf: (dbId) => inSpace.find((p) => p.id === dbId && p.kind === 'database')?.schema ?? null,
+    };
+  }
+
+  private async withDerived(row: Page): Promise<Page> {
+    const metas = await this.store.list();
+    const db = metas.find((p) => p.id === row.database);
+    if (!db?.schema?.some(isDerivedDef)) return row;
+    const [derived] = deriveRows(db.schema, [row as unknown as Row], this.deriveContext(metas, row.space));
+    return { ...row, props: derived.props };
   }
 
   private async must(id: string): Promise<Page> {
@@ -89,9 +110,98 @@ export class Workspace {
   }
 
   async update(id: string, patch: UpdatePatch, opts?: { baseUpdatedAt?: string }): Promise<Page> {
-    await this.must(id);
+    const page = await this.must(id);
     if (patch.parent) await this.must(patch.parent); // a parent you can't see behaves like one that doesn't exist
-    return this.store.update(id, patch, opts);
+    if (patch.props && page.database) {
+      const rest = await this.applyOtherSideEdits(page, patch.props);
+      if (rest !== patch.props) {
+        patch = { ...patch, props: rest };
+        if (Object.keys(rest).length === 0 && Object.keys(patch).every((k) => k === 'props')) return (await this.get(id))!;
+      }
+    }
+    const saved = await this.store.update(id, patch, opts);
+    return saved.database ? this.withDerived(saved) : saved;
+  }
+
+  /**
+   * The "other side" of a two-way relation has no stored value: editing it means adding or removing this row from the
+   * link lists of the rows on the other side. Returns the patch without those properties.
+   */
+  private async applyOtherSideEdits(row: Page, props: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const db = await this.store.get(row.database!);
+    const others = (db?.schema ?? []).filter((d) => d.type === 'relation' && d.relation?.reverseOf && d.id in props);
+    if (!db || others.length === 0) return props;
+    const metas = await this.store.list();
+    const rest: Record<string, unknown> = { ...props };
+    for (const def of others) {
+      delete rest[def.id];
+      const forward = def.relation!.reverseOf!;
+      const sourceDb = def.relation!.database;
+      const wanted = Array.isArray(props[def.id]) ? (props[def.id] as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+      const sources = metas.filter((p) => p.database === sourceDb && p.space === row.space);
+      const has = (r: PageMeta) => Array.isArray(r.props[forward]) && (r.props[forward] as string[]).includes(row.id);
+      const single = (sources[0] && (await this.store.get(sourceDb))?.schema?.find((d) => d.id === forward)?.relation?.single) === true;
+      for (const src of sources) {
+        const want = wanted.includes(src.id);
+        if (want === has(src)) continue;
+        const current = (Array.isArray(src.props[forward]) ? (src.props[forward] as string[]) : []).filter((x) => x !== row.id);
+        const next = want ? (single ? [row.id] : [...current, row.id]) : current;
+        await this.store.update(src.id, { props: { [forward]: next.length ? next : null } });
+      }
+    }
+    return rest;
+  }
+
+  /**
+   * Link two databases (or a database to itself). `twoWay` also adds a property to the other database that lists the rows
+   * pointing at it. A single-link self relation is how sub-items work (a "Parent" and its "Sub-items").
+   */
+  async addRelation(
+    sourceId: string,
+    opts: { name: string; target: string; twoWay: boolean; reverseName?: string; single?: boolean },
+  ): Promise<{ source: Page; target: Page; property: PropertyDef }> {
+    const source = await this.must(sourceId);
+    const target = await this.must(opts.target);
+    if (source.kind !== 'database' || target.kind !== 'database') throw new HttpError(400, 'Relations link databases');
+    const forward: PropertyDef = {
+      id: uid(),
+      name: opts.name.trim().slice(0, 60) || target.title || 'Relation',
+      type: 'relation',
+      relation: { database: target.id, ...(opts.single ? { single: true } : {}) },
+    };
+    const reverse: PropertyDef | null = opts.twoWay
+      ? {
+          id: uid(),
+          name: (opts.reverseName ?? '').trim().slice(0, 60) || source.title || 'Related',
+          type: 'relation',
+          relation: { database: source.id, reverseOf: forward.id },
+        }
+      : null;
+    try {
+      if (reverse && target.id === source.id) {
+        const both = await this.store.update(source.id, { schema: [...(source.schema ?? []), forward, reverse] });
+        return { source: both, target: both, property: forward };
+      }
+      const savedSource = await this.store.update(source.id, { schema: [...(source.schema ?? []), forward] });
+      if (!reverse) return { source: savedSource, target: target.id === source.id ? savedSource : target, property: forward };
+      const savedTarget = await this.store.update(target.id, { schema: [...(target.schema ?? []), reverse] });
+      return { source: savedSource, target: savedTarget, property: forward };
+    } catch (e: any) {
+      throw new HttpError(400, e.message);
+    }
+  }
+
+  /** Who is in the spaces you are in, by name, and remember your own name for the others. */
+  async people(): Promise<Record<string, string>> {
+    const spaces = await this.spaces();
+    const known = new Map((await this.store.listUsers()).map((u) => [u.email, u.name]));
+    if (this.user.name && known.get(this.email) !== this.user.name) {
+      await this.store.saveUser({ email: this.email, name: this.user.name });
+      known.set(this.email, this.user.name);
+    }
+    const out: Record<string, string> = {};
+    for (const s of spaces) for (const m of s.members) out[m] = known.get(m) || m.split('@')[0];
+    return out;
   }
 
   async remove(id: string): Promise<string[]> {
@@ -102,7 +212,9 @@ export class Workspace {
   async database(id: string): Promise<{ database: Page; rows: PageMeta[] } | null> {
     const database = await this.get(id);
     if (!database || database.kind !== 'database') return null;
-    const rows = (await this.store.list()).filter((p) => p.database === database.id);
+    const metas = await this.store.list();
+    const stored = metas.filter((p) => p.database === database.id);
+    const rows = deriveRows(database.schema ?? [], stored as unknown as Row[], this.deriveContext(metas, database.space)) as unknown as PageMeta[];
     return { database, rows };
   }
 
@@ -195,5 +307,7 @@ export class Workspace {
     return next;
   }
 }
+
+const isDerivedDef = (d: PropertyDef) => isDerived(d);
 
 export { isValidId };
