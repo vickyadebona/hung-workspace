@@ -1,4 +1,5 @@
 import { deriveRows, isDerived, uid, type DeriveContext, type PropertyDef, type Row } from './dbschema.ts';
+import { collectMyTasks, type MyTask } from './mytasks.ts';
 import { ensureSpacesFor, personalSpaceId } from './spaces.ts';
 import {
   isValidId,
@@ -189,6 +190,44 @@ export class Workspace {
     } catch (e: any) {
       throw new HttpError(400, e.message);
     }
+  }
+
+  /** Every task assigned to you, across all the spaces you are in. */
+  async myTasks(): Promise<MyTask[]> {
+    const spaces = await this.spaces();
+    return collectMyTasks(await this.store.list(), this.email, spaces);
+  }
+
+  /**
+   * Add a task for yourself. It goes in a "My tasks" database in your Personal space, which is made the first time you
+   * need it (with Status, Due, Priority and Owner), and is assigned to you.
+   */
+  async addMyTask(title: string, due?: string): Promise<MyTask> {
+    const clean = title.trim().slice(0, 200);
+    if (!clean) throw new HttpError(400, 'Write the task first');
+    await this.spaces();
+    const metas = await this.store.list();
+    let db = metas.find((p) => p.kind === 'database' && p.space === this.personalId && p.title === 'My tasks');
+    if (!db) {
+      db = await this.store.create({
+        space: this.personalId,
+        kind: 'database',
+        title: 'My tasks',
+        icon: '✅',
+        schema: [
+          { id: 'status', name: 'Status', type: 'select', options: [{ id: 'todo', name: 'Not started', color: 'gray' }, { id: 'doing', name: 'In progress', color: 'blue' }, { id: 'done', name: 'Done', color: 'green' }] },
+          { id: 'due', name: 'Due', type: 'date' },
+          { id: 'priority', name: 'Priority', type: 'select', options: [{ id: 'high', name: 'High', color: 'red' }, { id: 'medium', name: 'Medium', color: 'yellow' }, { id: 'low', name: 'Low', color: 'gray' }] },
+          { id: 'owner', name: 'Owner', type: 'person' },
+        ],
+      });
+    }
+    const props: Record<string, unknown> = { owner: [this.email], status: 'todo' };
+    if (due && /^\d{4}-\d{2}-\d{2}$/.test(due)) props.due = due;
+    const row = await this.store.create({ database: db.id, title: clean, props });
+    const found = (await this.myTasks()).find((t) => t.id === row.id);
+    if (!found) throw new HttpError(500, 'The task was saved but could not be listed');
+    return found;
   }
 
   /** Who is in the spaces you are in, by name, and remember your own name for the others. */

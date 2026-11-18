@@ -1,0 +1,10 @@
+---
+import Base from '../layouts/Base.astro';
+import Workspace from '../components/Workspace';
+import { workspaceFor } from '../lib/workspace';
+await workspaceFor(Astro.locals.user).spaces();
+const user = Astro.locals.user;
+---
+<Base title="My tasks · Hung Workspace">
+  <Workspace client:only="react" initialId={null} initialView="my-tasks" userName={user.name} userEmail={user.email} />
+</Base>

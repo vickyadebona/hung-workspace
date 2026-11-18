@@ -106,6 +106,10 @@ For pages: every page shows a **breadcrumb** above its title. In the editor, typ
 
 `npm run convert-hq` is a one-off that upgrades the TerraScape HQ databases to use all this: Tasks' plain-text Milestone becomes a real link to Milestones, Owner (Vicky / Andrew / Both) becomes a Person, and Milestones gain a task count and progress. It shows what it would do first; add `--apply` to do it. Back up first (`npm run backup -- --force`). To do the online copy, run it with `DATABASE_URL=... npm run convert-hq -- --apply`.
 
+## My tasks
+
+**My tasks** (in the sidebar, or `/my-tasks`) lists everything assigned to you across all the spaces you are in: rows of any database whose **Person** property includes you. Tasks are grouped Overdue, Today, Next 7 days, Later and No date; tick one to mark it done (it sets the database's Done status or checkbox). It works out each database's status, due date and priority from property names and types (a select called Status with an option like Done, a date called Due, a select called Priority). **Sources** lets you leave databases out (for example Milestones); that choice is remembered on this device. Type a task into the box at the top to add one for yourself: it goes into a **My tasks** database in your Personal space, created the first time, with you as Owner.
+
 ## How two people don't overwrite each other
 
 There's no live co-editing yet. Each save carries the version it started from. If the page changed elsewhere in the meantime, saving pauses and a banner offers "Load latest", so nobody's work is silently lost.
