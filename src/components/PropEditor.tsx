@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CheckIcon, ExternalLinkIcon, PlusIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -51,14 +51,16 @@ interface Props {
   onCreateOption?: (propId: string, name: string) => Promise<string | null>;
   /** People, members and linked databases (needed for person, relation and rollup properties). */
   ctx?: CellCtx;
+  /** Show long values across several lines instead of cutting them off. */
+  wrap?: boolean;
 }
 
-export default function PropEditor({ def, value, onChange, onCreateOption, ctx = emptyCtx }: Props) {
+export default function PropEditor({ def, value, onChange, onCreateOption, ctx = emptyCtx, wrap = false }: Props) {
   switch (def.type) {
     case 'text':
     case 'url':
     case 'number':
-      return <TextLike def={def} value={value} onChange={onChange} />;
+      return <TextLike def={def} value={value} onChange={onChange} wrap={wrap} />;
     case 'date':
       return (
         <Input
@@ -73,11 +75,11 @@ export default function PropEditor({ def, value, onChange, onCreateOption, ctx =
       return <Checkbox className="mx-1.5" aria-label={def.name} checked={value === true} onCheckedChange={(c) => onChange(c === true ? true : null)} />;
     case 'select':
     case 'multiselect':
-      return <SelectLike def={def} value={value} onChange={onChange} onCreateOption={onCreateOption} />;
+      return <SelectLike def={def} value={value} onChange={onChange} onCreateOption={onCreateOption} wrap={wrap} />;
     case 'person':
-      return <PersonEditor def={def} value={value} onChange={onChange} ctx={ctx} />;
+      return <PersonEditor def={def} value={value} onChange={onChange} ctx={ctx} wrap={wrap} />;
     case 'relation':
-      return <RelationEditor def={def} value={value} onChange={onChange} ctx={ctx} />;
+      return <RelationEditor def={def} value={value} onChange={onChange} ctx={ctx} wrap={wrap} />;
     case 'rollup':
       return <RollupCell def={def} value={value} />;
     case 'formula':
@@ -85,7 +87,7 @@ export default function PropEditor({ def, value, onChange, onCreateOption, ctx =
   }
 }
 
-function TextLike({ def, value, onChange }: Omit<Props, 'onCreateOption'>) {
+function TextLike({ def, value, onChange, wrap }: Omit<Props, 'onCreateOption'>) {
   const shown = value === null || value === undefined ? '' : String(value);
   const [local, setLocal] = useState(shown);
   useEffect(() => setLocal(shown), [shown]);
@@ -100,8 +102,30 @@ function TextLike({ def, value, onChange }: Omit<Props, 'onCreateOption'>) {
     }
   };
 
+  const keys = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !(wrap && e.shiftKey)) {
+      e.preventDefault();
+      (e.target as HTMLElement).blur();
+    }
+    if (e.key === 'Escape') {
+      setLocal(shown);
+      (e.target as HTMLElement).blur();
+    }
+  };
+
   return (
     <span className="flex items-center gap-0.5">
+      {wrap && def.type !== 'number' ? (
+        <GrowingText
+          className={cn(cellInput, 'min-h-7 w-full')}
+          ariaLabel={def.name}
+          value={local}
+          placeholder={def.type === 'url' ? 'https://' : ''}
+          onChange={setLocal}
+          onBlur={commit}
+          onKeyDown={keys}
+        />
+      ) : (
       <Input
         className={cellInput}
         type={def.type === 'number' ? 'number' : 'text'}
@@ -110,14 +134,9 @@ function TextLike({ def, value, onChange }: Omit<Props, 'onCreateOption'>) {
         placeholder={def.type === 'url' ? 'https://' : ''}
         onChange={(e) => setLocal(e.target.value)}
         onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') {
-            setLocal(shown);
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
+        onKeyDown={keys}
       />
+      )}
       {def.type === 'url' && isSafeUrl(shown) && (
         <Button asChild variant="ghost" size="icon-xs" className="text-primary">
           <a href={shown} target="_blank" rel="noopener noreferrer" aria-label={`Open ${def.name}`} title="Open link">
@@ -129,7 +148,7 @@ function TextLike({ def, value, onChange }: Omit<Props, 'onCreateOption'>) {
   );
 }
 
-function SelectLike({ def, value, onChange, onCreateOption }: Props) {
+function SelectLike({ def, value, onChange, onCreateOption, wrap }: Props) {
   const multi = def.type === 'multiselect';
   const options = def.options ?? [];
   const selected: string[] = multi ? (Array.isArray(value) ? value : []) : typeof value === 'string' ? [value] : [];
@@ -167,7 +186,7 @@ function SelectLike({ def, value, onChange, onCreateOption }: Props) {
       className="w-60 p-0"
       trigger={
         <button
-          className="flex min-h-7 w-full flex-wrap items-center gap-1 rounded-md px-1.5 py-0.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:bg-muted"
+          className={triggerCls(wrap)}
           aria-label={def.name}
           type="button"
         >
@@ -217,10 +236,13 @@ function SelectLike({ def, value, onChange, onCreateOption }: Props) {
   );
 }
 
-const triggerCls =
-  'flex min-h-7 w-full flex-wrap items-center gap-1 rounded-md px-1.5 py-0.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:bg-muted';
+const triggerBase ='flex min-h-7 w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:bg-muted';
+/** Chips wrap onto several lines when the view asks for it; otherwise they stay on one line and are cut off at the column edge. */
+function triggerCls(wrap?: boolean) {
+  return cn(triggerBase, wrap ? 'flex-wrap' : 'flex-nowrap overflow-hidden');
+}
 
-function PersonEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx }) {
+function PersonEditor({ def, value, onChange, ctx, wrap }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx; wrap?: boolean }) {
   const selected = Array.isArray(value) ? value : [];
   const toggle = (email: string) => {
     const next = selected.includes(email) ? selected.filter((x) => x !== email) : [...selected, email];
@@ -230,7 +252,7 @@ function PersonEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: 
     <Popover
       className="w-64 p-0"
       trigger={
-        <button className={triggerCls} aria-label={def.name} type="button">
+        <button className={triggerCls(wrap)} aria-label={def.name} type="button">
           {selected.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
           {selected.map((e) => (
             <PersonChip key={e} name={nameOf(ctx, e)} />
@@ -259,7 +281,7 @@ function PersonEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: 
   );
 }
 
-function RelationEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx }) {
+function RelationEditor({ def, value, onChange, ctx, wrap }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx; wrap?: boolean }) {
   const dbId = def.relation?.database ?? '';
   const info = ctx.related[dbId];
   const single = def.relation?.single === true;
@@ -277,7 +299,7 @@ function RelationEditor({ def, value, onChange, ctx }: { def: PropertyDef; value
     <Popover
       className="w-72 p-0"
       trigger={
-        <button className={triggerCls} aria-label={def.name} type="button">
+        <button className={triggerCls(wrap)} aria-label={def.name} type="button">
           {selected.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
           {selected.map((id) => (
             <RowChip key={id} title={titleOf(ctx, dbId, id) ?? '…'} />
@@ -354,3 +376,45 @@ export function FormulaCell({ value }: { value: PropValue }) {
   }
   return <span className="px-1.5 text-sm">{String(value)}</span>;
 }
+
+/** A text box that grows to fit what is in it (used when cells wrap). */
+function GrowingText({
+  value,
+  onChange,
+  onBlur,
+  onKeyDown,
+  className,
+  ariaLabel,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  className?: string;
+  ariaLabel: string;
+  placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      value={value}
+      className={cn('block resize-none overflow-hidden rounded-md border px-1.5 py-1 text-sm outline-none', className)}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
+export { GrowingText };

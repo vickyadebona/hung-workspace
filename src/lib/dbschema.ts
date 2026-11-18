@@ -102,6 +102,8 @@ export interface View {
   groupBy?: string; // board: a select property id
   dateProp?: string; // calendar: a date property id
   nestBy?: string; // table / list: a single-link relation to this same database; rows are shown nested under their parent
+  widths?: Record<string, number>; // table: column widths in pixels, by property id (or 'title')
+  wrap?: boolean; // table: show long text across several lines instead of cutting it off
 }
 
 export interface Row {
@@ -259,6 +261,15 @@ export function sanitizeViews(input: unknown, schema: PropertyDef[]): View[] {
     else if (type === 'board') {
       const first = schema.find((p) => p.type === 'select');
       if (first) view.groupBy = first.id;
+    }
+    if (type === 'table') {
+      const w = isObj(raw.widths) ? raw.widths : {};
+      const widths: Record<string, number> = {};
+      for (const [k, v] of Object.entries(w)) {
+        if (ids.has(k) && typeof v === 'number' && Number.isFinite(v)) widths[k] = Math.min(800, Math.max(60, Math.round(v)));
+      }
+      if (Object.keys(widths).length) view.widths = widths;
+      if (raw.wrap === true) view.wrap = true;
     }
     const nest = schema.find((p) => p.id === raw.nestBy && p.type === 'relation' && !p.relation?.reverseOf && p.relation?.single);
     if ((type === 'table' || type === 'list') && nest) view.nestBy = nest.id;

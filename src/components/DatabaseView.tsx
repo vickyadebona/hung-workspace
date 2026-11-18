@@ -206,6 +206,7 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
 
   const common = {
     ctx,
+    onView: (patch: Partial<View>) => saveViews(views.map((v) => (v.id === view.id ? { ...v, ...patch } : v))),
     schema,
     view,
     rows: shown,

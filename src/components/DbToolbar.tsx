@@ -192,6 +192,12 @@ export default function DbToolbar({ schema, views, view, onSelectView, onViews, 
             <>
               <MenuLabel>View name</MenuLabel>
               <Input aria-label="View name" value={view.name} maxLength={40} onChange={(e) => updateView({ name: e.target.value })} />
+              {view.type === 'table' && (
+                <label className="flex items-center gap-2 px-2 py-1 text-sm">
+                  <Checkbox checked={view.wrap === true} onCheckedChange={(c) => updateView({ wrap: c === true ? true : undefined })} />
+                  Wrap long text in cells
+                </label>
+              )}
               {(view.type === 'table' || view.type === 'list') && nestable.length > 0 && (
                 <>
                   <MenuLabel>Sub-items</MenuLabel>

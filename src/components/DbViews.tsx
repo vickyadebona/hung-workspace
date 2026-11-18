@@ -16,7 +16,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import DeleteButton from './ConfirmDelete';
-import PropEditor, { Chip, FormulaCell, PersonChip, RollupCell, RowChip, cellInput, isSafeUrl } from './PropEditor';
+import PropEditor, { Chip, FormulaCell, GrowingText, PersonChip, RollupCell, RowChip, cellInput, isSafeUrl } from './PropEditor';
 import { nameOf, titleOf, type CellCtx } from './cells';
 import SimpleSelect from './SimpleSelect';
 
@@ -32,6 +32,8 @@ export interface ViewProps {
   onDelete: (rowId: string) => void;
   onCreateOption: (propId: string, name: string) => Promise<string | null>;
   ctx: CellCtx;
+  /** Change settings of the view being shown (column widths, wrapping). */
+  onView: (patch: Partial<View>) => void;
 }
 
 const meta = 'inline-flex items-center gap-1 text-xs text-muted-foreground';
@@ -103,9 +105,23 @@ export function ValueView({ def, value, ctx }: { def: PropertyDef; value: PropVa
   }
 }
 
-function TitleInput({ row, autoFocus, onTitle }: { row: Row; autoFocus: boolean; onTitle: (id: string, t: string) => void }) {
+function TitleInput({ row, autoFocus, onTitle, wrap }: { row: Row; autoFocus: boolean; onTitle: (id: string, t: string) => void; wrap?: boolean }) {
   const [local, setLocal] = useState(row.title);
   useEffect(() => setLocal(row.title), [row.title]);
+  const commit = () => local !== row.title && onTitle(row.id, local);
+  const keys = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !(wrap && e.shiftKey)) {
+      e.preventDefault();
+      (e.target as HTMLElement).blur();
+    }
+    if (e.key === 'Escape') {
+      setLocal(row.title);
+      (e.target as HTMLElement).blur();
+    }
+  };
+  if (wrap) {
+    return <GrowingText className={cn(cellInput, 'min-h-7 flex-1 font-medium')} ariaLabel="Name" value={local} placeholder="Untitled" onChange={setLocal} onBlur={commit} onKeyDown={keys} />;
+  }
   return (
     <Input
       className={cn(cellInput, 'font-medium')}
@@ -115,14 +131,8 @@ function TitleInput({ row, autoFocus, onTitle }: { row: Row; autoFocus: boolean;
       placeholder="Untitled"
       onChange={(e) => setLocal(e.target.value)}
       onFocus={(e) => autoFocus && e.target.select()}
-      onBlur={() => local !== row.title && onTitle(row.id, local)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') {
-          setLocal(row.title);
-          (e.target as HTMLInputElement).blur();
-        }
-      }}
+      onBlur={commit}
+      onKeyDown={keys}
     />
   );
 }
@@ -184,45 +194,128 @@ function NestToggle({ depth, hasChildren, open, onToggle, label }: { depth: numb
 
 /* ------------------------------ Table ------------------------------ */
 
+/** Starting width of a column, by what it holds. */
+function defaultWidth(def: PropertyDef | null): number {
+  switch (def?.type) {
+    case undefined:
+      return 280; // the Name column
+    case 'checkbox':
+      return 96;
+    case 'number':
+      return 120;
+    case 'date':
+      return 150;
+    case 'rollup':
+      return 140;
+    case 'select':
+    case 'multiselect':
+    case 'person':
+    case 'formula':
+      return 170;
+    case 'relation':
+      return 220;
+    default:
+      return 200;
+  }
+}
+
+const MIN_COL = 60;
+const MAX_COL = 800;
+const ACTIONS_COL = 56;
+
 export function TableView(p: ViewProps) {
   const nest = useNested(p.rows, p.view.nestBy);
+  const wrap = p.view.wrap === true;
+  // widths being dragged right now (committed to the view when the mouse is released)
+  const [live, setLive] = useState<Record<string, number>>({});
+  const widthOf = (id: string, def: PropertyDef | null) => live[id] ?? p.view.widths?.[id] ?? defaultWidth(def);
+  const columns = [{ id: 'title', def: null as PropertyDef | null, name: 'Name' }, ...p.schema.map((d) => ({ id: d.id, def: d as PropertyDef | null, name: d.name }))];
+  const total = columns.reduce((sum, c) => sum + widthOf(c.id, c.def), ACTIONS_COL);
+
+  const startResize = (e: React.PointerEvent, id: string, def: PropertyDef | null) => {
+    e.preventDefault();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = widthOf(id, def);
+    let latest = startW;
+    const move = (ev: PointerEvent) => {
+      latest = Math.min(MAX_COL, Math.max(MIN_COL, Math.round(startW + ev.clientX - startX)));
+      setLive((cur) => ({ ...cur, [id]: latest }));
+    };
+    const up = () => {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      setLive((cur) => {
+        const { [id]: _drop, ...rest } = cur;
+        return rest;
+      });
+      if (latest !== startW) p.onView({ widths: { ...(p.view.widths ?? {}), [id]: latest } });
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+  };
+
+  const resetWidth = (id: string) => {
+    const { [id]: _drop, ...rest } = p.view.widths ?? {};
+    p.onView({ widths: rest });
+  };
+
+  const cellCls = cn('px-1 py-0.5', wrap ? 'align-top whitespace-normal' : 'overflow-hidden');
+
   return (
     <div>
-      <Table className="min-w-[600px]">
+      <Table className="table-fixed" style={{ width: total }}>
+        <colgroup>
+          {columns.map((c) => (
+            <col key={c.id} style={{ width: widthOf(c.id, c.def) }} />
+          ))}
+          <col style={{ width: ACTIONS_COL }} />
+        </colgroup>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="h-8 min-w-56 text-xs font-medium text-muted-foreground">Name</TableHead>
-            {p.schema.map((d) => (
-              <TableHead key={d.id} className="h-8 text-xs font-medium text-muted-foreground">
-                {d.name}
+            {columns.map((c) => (
+              <TableHead key={c.id} className="relative h-8 overflow-hidden text-xs font-medium text-ellipsis text-muted-foreground">
+                {c.name}
+                <span
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize the ${c.name} column`}
+                  title="Drag to resize, double-click to reset"
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize touch-none select-none hover:bg-primary/40 active:bg-primary/60"
+                  onPointerDown={(e) => startResize(e, c.id, c.def)}
+                  onDoubleClick={() => resetWidth(c.id)}
+                />
               </TableHead>
             ))}
-            <TableHead className="h-8 w-10" />
+            <TableHead className="h-8" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {nest.list.map(({ row: r, depth, hasChildren }) => (
             <TableRow key={r.id} data-row-id={r.id} className="group/row hover:bg-transparent">
-              <TableCell className="px-1 py-0.5">
+              <TableCell className={cellCls}>
                 <div className="flex items-center gap-1">
                   {p.view.nestBy && <NestToggle depth={depth} hasChildren={hasChildren} open={!nest.collapsed.has(r.id)} onToggle={() => nest.toggle(r.id)} label={r.title || 'row'} />}
-                  <TitleInput row={r} autoFocus={p.focusRowId === r.id} onTitle={p.onTitle} />
-                  <Button variant="outline" size="xs" className={cn('text-muted-foreground', reveal)} onClick={() => p.onOpen(r.id)} aria-label={`Open ${r.title || 'Untitled'}`}>
+                  <TitleInput row={r} autoFocus={p.focusRowId === r.id} onTitle={p.onTitle} wrap={wrap} />
+                  <Button variant="outline" size="xs" className={cn('flex-none text-muted-foreground', reveal)} onClick={() => p.onOpen(r.id)} aria-label={`Open ${r.title || 'Untitled'}`}>
                     Open
                   </Button>
                   {p.view.nestBy && (
-                    <Button variant="ghost" size="icon-xs" className={cn('text-muted-foreground', reveal)} aria-label={`Add a sub-item to ${r.title || 'row'}`} title="Add a sub-item" onClick={() => p.onAdd({ props: { [p.view.nestBy!]: [r.id] } })}>
+                    <Button variant="ghost" size="icon-xs" className={cn('flex-none text-muted-foreground', reveal)} aria-label={`Add a sub-item to ${r.title || 'row'}`} title="Add a sub-item" onClick={() => p.onAdd({ props: { [p.view.nestBy!]: [r.id] } })}>
                       <CornerDownRightIcon />
                     </Button>
                   )}
                 </div>
               </TableCell>
               {p.schema.map((d) => (
-                <TableCell key={d.id} className="px-1 py-0.5 whitespace-normal">
-                  <PropEditor def={d} value={r.props[d.id] ?? null} onChange={(v) => p.onProp(r.id, d.id, v)} onCreateOption={p.onCreateOption} ctx={p.ctx} />
+                <TableCell key={d.id} className={cellCls}>
+                  <PropEditor def={d} value={r.props[d.id] ?? null} onChange={(v) => p.onProp(r.id, d.id, v)} onCreateOption={p.onCreateOption} ctx={p.ctx} wrap={wrap} />
                 </TableCell>
               ))}
-              <TableCell className="px-1 py-0.5 text-right">
+              <TableCell className="px-1 py-0.5 text-right align-top">
                 <RowDelete row={r} onDelete={p.onDelete} className={reveal} />
               </TableCell>
             </TableRow>
