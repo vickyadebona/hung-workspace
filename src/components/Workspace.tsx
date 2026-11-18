@@ -42,6 +42,7 @@ import SearchModal from './SearchModal';
 import NewSpaceDialog from './NewSpaceDialog';
 import { PageSkeleton, SidebarSkeleton } from './Skeletons';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
+import { pageRegistry } from './childpage';
 import { WorkspaceDataProvider } from './workspace-context';
 
 interface Props {
@@ -221,6 +222,11 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     return m;
   }, [pages, activeSpace]);
 
+  // Page blocks show (and export to Markdown) a page's current icon and title.
+  useEffect(() => {
+    pageRegistry.pages = new Map(pages.map((p) => [p.id, { title: p.title, icon: p.icon }]));
+  }, [pages]);
+
   const onMeta = useCallback((id: string, patch: { title?: string; icon?: string; updatedAt?: string }) => {
     setPages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
@@ -333,7 +339,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   const emptyState = 'grid h-[60vh] place-items-center text-center text-muted-foreground';
 
   return (
-    <WorkspaceDataProvider value={{ people, spaces, pages }}>
+    <WorkspaceDataProvider value={{ people, spaces, pages, openPage: (id) => go(id) }}>
       <Sidebar>
         <SidebarHeader>
           <SidebarMenu>
