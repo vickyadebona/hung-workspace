@@ -8,7 +8,7 @@ const link = (href: string, text = '📄 Title') => ({ type: 'paragraph', conten
 test('a paragraph that is only a link to a page becomes a page block', () => {
   const [b] = linkParagraphsToChildPages([link(`/p/${ID}`)]);
   assert.equal(b.type, 'childPage');
-  assert.equal((b.props as any).pageId, ID);
+  assert.equal((b as any).props.pageId, ID);
 });
 
 test('ordinary links and mixed paragraphs are left alone', () => {
