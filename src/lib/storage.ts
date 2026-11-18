@@ -367,7 +367,7 @@ export abstract class BasePageStore implements PageStore {
       space,
       title: input.title?.trim() || (kind === 'database' ? 'Untitled database' : 'Untitled'),
       parent,
-      icon: input.icon ?? (kind === 'database' ? '🗂️' : ''),
+      icon: input.icon ?? (kind === 'database' ? '🗂️' : '😊'),
       order: siblings.length ? Math.max(...siblings.map((s) => s.order)) + 1 : 0,
       createdAt: now,
       updatedAt: now,

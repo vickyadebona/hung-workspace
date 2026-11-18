@@ -9,6 +9,7 @@ import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, FileTextIcon, Table2Icon } from 'lucide-react';
 import { api, type Page, type PageMeta } from './api';
+import IconPicker from './IconPicker';
 import { childPageIds, childPagesToLinks, linkParagraphsToChildPages } from './childpage-blocks';
 import { pageRegistry, pageSchema } from './childpage';
 
@@ -182,16 +183,14 @@ export default function PageEditor({ page, theme, onMeta, onReload, extra, ances
         </nav>
       )}
       <div className="mb-3 flex items-center gap-2 md:pl-[54px]">
-        <input
+        <IconPicker
           className={iconInput}
+          label="Page icon"
           value={icon}
-          maxLength={4}
-          placeholder="🙂"
-          aria-label="Page icon"
-          onChange={(e) => {
-            setIcon(e.target.value);
-            latest.current.icon = e.target.value;
-            onMeta(page.id, { icon: e.target.value });
+          onChange={(v) => {
+            setIcon(v);
+            latest.current.icon = v;
+            onMeta(page.id, { icon: v });
             schedule();
           }}
         />
