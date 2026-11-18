@@ -127,11 +127,17 @@ async function backup() {
   const src = await gatherSource();
   try {
     const hash = fingerprint(src.dir);
-    const pending = destinations.filter((d) => {
-      if (force) return true;
-      const f = path.join(d, HASH_FILE);
-      return !(fs.existsSync(f) && fs.readFileSync(f, 'utf8').trim() === hash && backupsIn(d).length > 0);
-    });
+    // "Has anything changed?" is answered once, from the hash kept next to the main (local) backups. Google Drive
+    // can't be trusted for it: files in a Drive folder may be online-only placeholders that fail to read.
+    const lastHash = (() => {
+      try {
+        return fs.readFileSync(path.join(primary, HASH_FILE), 'utf8').trim();
+      } catch {
+        return '';
+      }
+    })();
+    const changed = force || lastHash !== hash;
+    const pending = destinations.filter((d) => changed || backupsIn(d).length === 0);
     if (pending.length === 0) {
       console.log('Nothing has changed since the last backup, so no new one was made. (Use --force to make one anyway.)');
       return;
@@ -143,13 +149,14 @@ async function backup() {
     let failed = 0;
     for (const dest of pending) {
       try {
-        fs.mkdirSync(dest, { recursive: true });
+        // Only create the folder when it's missing: asking a Google Drive folder to "create" one that exists can error.
+        if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
         const target = path.join(dest, name);
         // Write to a temporary name first so a half-written archive is never mistaken for a good one.
         const partial = `${target}.partial`;
         execFileSync('tar', ['-czf', partial, '-C', src.dir, '.']);
         fs.renameSync(partial, target);
-        fs.writeFileSync(path.join(dest, HASH_FILE), hash + '\n');
+        if (dest === primary) fs.writeFileSync(path.join(dest, HASH_FILE), hash + '\n');
         prune(dest);
         made.push(target);
       } catch (err) {
