@@ -40,6 +40,7 @@ import PageEditor from './PageEditor';
 import RowProps from './RowProps';
 import SearchModal from './SearchModal';
 import NewSpaceDialog from './NewSpaceDialog';
+import { PageSkeleton, SidebarSkeleton } from './Skeletons';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
 import { WorkspaceDataProvider } from './workspace-context';
 
@@ -77,6 +78,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   const [rowDb, setRowDb] = useState<Page | null>(null);
   const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false); // the server could not be reached
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('preferences');
@@ -158,6 +160,9 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
       const first = firstPage(list, space);
       if (first) go(first.id, true);
       else setLoading(false);
+    }).catch(() => {
+      setLoadError(true);
+      setLoading(false);
     });
   }, [refreshList, go, setActiveSpace]);
 
@@ -166,6 +171,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     if (!currentId) return;
     let cancelled = false;
     setLoading(true);
+    setLoadError(false);
     setMissing(false);
     api.get(currentId).then(async (p) => {
       const parentDb = p?.database ? await api.get(p.database) : null;
@@ -188,6 +194,10 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           return next;
         });
       }
+    }).catch(() => {
+      if (cancelled) return;
+      setLoadError(true);
+      setLoading(false);
     });
     return () => {
       cancelled = true;
@@ -383,6 +393,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           <SidebarGroup>
             <SidebarGroupLabel>{activeInfo?.kind === 'personal' ? 'My pages' : 'Pages'}</SidebarGroupLabel>
             <SidebarGroupContent>
+              {spaces.length === 0 && !loadError && <SidebarSkeleton />}
               <nav aria-label="Pages">
                 <Tree
                   parent={null}
@@ -452,8 +463,19 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           <SidebarTrigger className="text-muted-foreground" />
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
-          {loading && <div className={emptyState}>Loading…</div>}
-          {!loading && missing && (
+          {loading && !loadError && <PageSkeleton />}
+          {loadError && (
+            <div className={emptyState}>
+              <div>
+                <p>Couldn't reach the server.</p>
+                <p className="text-sm">Check your connection (or that the app is running), then try again.</p>
+                <Button className="mt-3" variant="outline" onClick={() => window.location.reload()}>
+                  Try again
+                </Button>
+              </div>
+            </div>
+          )}
+          {!loading && !loadError && missing && (
             <div className={emptyState}>
               <div>
                 <p>That page doesn't exist (it may have been deleted).</p>
@@ -463,7 +485,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && !missing && !page && (
+          {!loading && !loadError && !missing && !page && (
             <div className={emptyState}>
               <div>
                 <p>No pages yet.</p>
@@ -473,10 +495,10 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && page && page.kind === 'database' && (
+          {!loading && !loadError && page && page.kind === 'database' && (
             <DatabaseView key={page.id} dbId={page.id} onMeta={onMeta} onOpenRow={(id) => go(id)} />
           )}
-          {!loading && page && page.kind !== 'database' && (
+          {!loading && !loadError && page && page.kind !== 'database' && (
             <PageEditor
               key={`${page.id}:${reloadKey}`}
               page={page}

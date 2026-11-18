@@ -6,6 +6,7 @@ import { Banner, iconInput, titleInput } from './PageEditor';
 import { addOption } from './dbops';
 import DbToolbar from './DbToolbar';
 import { useCellCtx } from './cells';
+import { DatabaseSkeleton } from './Skeletons';
 import { useDatabases } from './workspace-context';
 import { BoardView, CalendarView, ListView, TableView } from './DbViews';
 
@@ -191,7 +192,7 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
         </div>
       </div>
     );
-  if (!db || !view) return <div className="grid h-[60vh] place-items-center text-muted-foreground">Loading…</div>;
+  if (!db || !view) return <DatabaseSkeleton />;
 
   const addRelation = async (opts: { name: string; target: string; twoWay: boolean; reverseName?: string; single?: boolean }) => {
     const r = await api.addRelation(dbId, opts);
