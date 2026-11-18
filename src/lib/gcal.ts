@@ -118,9 +118,22 @@ async function accessToken(deps: GcalDeps, email: string): Promise<string | null
   return tok.access_token;
 }
 
+/** Google's 403 has a few very different causes; say which one it was. */
+async function explainForbidden(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as { error?: { message?: string; errors?: { reason?: string }[]; status?: string } };
+  const reason = body.error?.errors?.[0]?.reason ?? '';
+  if (reason === 'accessNotConfigured' || /has not been used|is disabled/i.test(body.error?.message ?? ''))
+    return 'Google Calendar API is switched off for this Google Cloud project. Enable it under APIs & Services > Library > Google Calendar API, then reload.';
+  if (reason === 'insufficientPermissions' || body.error?.status === 'PERMISSION_DENIED')
+    return 'Google did not grant calendar access. Disconnect and connect again, and tick the calendar permission on the Google screen.';
+  if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') return 'Google is limiting requests right now. Try again in a minute.';
+  return `Google refused the request (403${reason ? `: ${reason}` : ''}).`;
+}
+
 async function api<T>(deps: GcalDeps, token: string, url: string): Promise<T> {
   const res = await deps.fetch(url, { headers: { authorization: `Bearer ${token}` } });
   if (res.status === 401) throw new Expired();
+  if (res.status === 403) throw new Error(await explainForbidden(res));
   if (!res.ok) throw new Error(`Google Calendar answered ${res.status}`);
   return (await res.json()) as T;
 }

@@ -6,7 +6,8 @@ const PUBLIC_PREFIXES = ['/auth/', '/favicon', '/_astro/', '/icons/', '/manifest
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return next();
+  // /mcp is the connector for Claude and other tools: it checks its own access token instead of a sign-in cookie.
+  if (pathname === '/mcp' || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return next();
 
   let session = null;
   try {
