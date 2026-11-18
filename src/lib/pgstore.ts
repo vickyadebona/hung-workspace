@@ -46,6 +46,13 @@ const SCHEMA = [
     name       text NOT NULL,
     updated_at text NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS integrations (
+    email      text NOT NULL,
+    provider   text NOT NULL,
+    sealed     text NOT NULL,
+    updated_at text NOT NULL,
+    PRIMARY KEY (email, provider)
+  )`,
   `CREATE INDEX IF NOT EXISTS pages_database_idx ON pages (database_id) WHERE trashed_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS pages_parent_idx ON pages (parent) WHERE trashed_at IS NULL`,
 ];
@@ -222,6 +229,24 @@ export class PgPageStore extends BasePageStore {
     await (await this.db()).query(
       `INSERT INTO users (email, name, updated_at) VALUES ($1,$2,$3) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
       [user.email, user.name, new Date().toISOString()],
+    );
+  }
+
+  protected async readIntegration(email: string, provider: string): Promise<string | null> {
+    const { rows } = await (await this.db()).query(`SELECT sealed FROM integrations WHERE email = $1 AND provider = $2`, [email, provider]);
+    return rows[0]?.sealed ?? null;
+  }
+
+  protected async writeIntegration(email: string, provider: string, sealed: string | null): Promise<void> {
+    const sql = await this.db();
+    if (sealed === null) {
+      await sql.query(`DELETE FROM integrations WHERE email = $1 AND provider = $2`, [email, provider]);
+      return;
+    }
+    await sql.query(
+      `INSERT INTO integrations (email, provider, sealed, updated_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (email, provider) DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = EXCLUDED.updated_at`,
+      [email, provider, sealed, new Date().toISOString()],
     );
   }
 }

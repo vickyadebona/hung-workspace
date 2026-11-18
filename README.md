@@ -98,11 +98,37 @@ In a database, **Properties → New property** now also offers:
 - **Rollup**: summarise the rows a relation points at: count, percent checked, percent with a status (e.g. Done), sum, average, smallest, largest, earliest or latest date. Rollups are worked out on the fly and are read-only; you can filter and sort on them.
 - **Sub-items**: add a relation from a database to *itself* with "Only one linked row" (call it Parent) and the other side Sub-items. Then, in the view's **⋯** menu, choose "Nest under Parent" and the table or list shows sub-items indented under their parents, with a "+" to add one.
 
+- **Formula**: a value worked out for each row from its other properties, for example `prop("Price") * prop("Quantity")` or `if(prop("Done"), "finished", "to do")` or `dateBetween(prop("Due"), today(), "days")`. Use `prop("Name")` for a property; combine with `+ - * / %`, compare with `== != < > <= >=`, and use `and` / `or` / `not`. There are functions for text (`concat`, `upper`, `lower`, `contains`, `replace`, `substring`, `join`, `length`), numbers (`round`, `floor`, `ceil`, `abs`, `min`, `max`, `sum`, `pow`, `sqrt`, `toNumber`) and dates (`today`, `date`, `dateAdd`, `dateSubtract`, `dateBetween`, `year`, `month`, `day`, `formatDate`). A formula can use rollups and formulas defined before it. It is checked as you type, and a formula that can't be worked out for a row just leaves that cell empty. Formulas run in a small interpreter (no code is ever executed), so they are safe to share.
+
+In a table view you can **drag a column's right edge to resize it** (double-click the edge to reset it), and the view's **⋯** menu has **Wrap long text in cells**, which lets names and text fields run onto several lines instead of being cut off. Both are saved with that view.
+
 Relations never cross spaces, and a database that is linked to another can't be moved to a different space on its own. Worked-out columns (the other side of a relation, rollups) are never stored in the files, so they can't go out of date.
 
 For pages: every page shows a **breadcrumb** above its title. In the editor, type **/page** to create a page inside the current one; it appears right there in the text as a block with its icon and current name (rename the page and the block follows), and clicking it opens the page. In the file it is stored as a line holding just a link, `[📄 Title](/p/<id>)`. Deleting the block only removes the reference; the page stays in the sidebar, and any pages inside a page that aren't shown in its text (for example ones made with the sidebar's **+**) are listed under "Pages inside this page". (Putting a whole database inline in a page is not built yet.)
 
 `npm run convert-hq` is a one-off that upgrades the TerraScape HQ databases to use all this: Tasks' plain-text Milestone becomes a real link to Milestones, Owner (Vicky / Andrew / Both) becomes a Person, and Milestones gain a task count and progress. It shows what it would do first; add `--apply` to do it. Back up first (`npm run backup -- --force`). To do the online copy, run it with `DATABASE_URL=... npm run convert-hq -- --apply`.
+
+## My tasks
+
+**My tasks** (in the sidebar, or `/my-tasks`) lists everything assigned to you across all the spaces you are in: rows of any database whose **Person** property includes you. Tasks are grouped Overdue, Today, Next 7 days, Later and No date; tick one to mark it done (it sets the database's Done status or checkbox). It works out each database's status, due date and priority from property names and types (a select called Status with an option like Done, a date called Due, a select called Priority). **Sources** lets you leave databases out (for example Milestones); that choice is remembered on this device. Type a task into the box at the top to add one for yourself: it goes into a **My tasks** database in your Personal space, created the first time, with you as Owner.
+
+## Google Calendar (read only)
+
+Each person can connect **their own** Google Calendar (Settings → Integrations, or the Connect button in the sidebar). Then:
+
+- the sidebar shows **Upcoming**: your own events for the next 3 days, from the calendars you have ticked in Google Calendar (clicking one opens it in Google Calendar);
+- **Calendar** (sidebar, or `/calendar`) shows your week, or a two-week agenda, at a glance. There is no editing: change events in Google Calendar.
+
+How it stays private and safe: it asks Google for **read-only** access to events and the list of calendars (nothing that can change a calendar). Everyone connects their own account, and the app only ever asks Google for the signed-in person's own events; there is no way to request someone else's. The permission Google hands back (a refresh token) is stored **encrypted** (AES-256-GCM, keyed from `SESSION_SECRET`), never sent to the browser, and left out of backups and exports. Changing `SESSION_SECRET` makes stored connections unreadable, so people just reconnect. **Disconnect** forgets the token and asks Google to revoke it.
+
+One-time setup in Google Cloud Console (the project that holds your sign-in credentials):
+
+1. **APIs & Services → Library**: search for **Google Calendar API** and click **Enable**.
+2. **OAuth consent screen / Google Auth Platform → Data Access → Add or remove scopes**: add `.../auth/calendar.events.readonly` and `.../auth/calendar.calendarlist.readonly`, then save.
+3. Nothing to change under Credentials: connecting reuses the same redirect addresses you already added for sign-in.
+4. While the app is in **Testing** mode, Google ends each person's connection after **7 days** and they have to reconnect. To avoid that, open **Audience** and click **Publish app**. For a private two-person tool that is fine: Google shows an "unverified app" notice on the consent screen (choose Advanced, then continue) and allows up to 100 users.
+
+Trying the screens on your Mac without a Google connection: start the app with `AUTH_DEV=1 CALENDAR_MOCK=1` to see example events (this switch does nothing on the live site).
 
 ## How two people don't overwrite each other
 
@@ -117,7 +143,7 @@ npx astro check   # types
 
 ## Not yet (planned)
 
-Formulas, a timeline view and a "My tasks" page, comments and @mentions, row templates and recurring tasks, inline databases inside pages, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
+A timeline view, comments and @mentions, row templates and recurring tasks, inline databases inside pages, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
 
 ## Put it on Vercel (shared with Andrew)
 

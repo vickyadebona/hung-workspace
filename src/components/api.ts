@@ -64,6 +64,29 @@ export interface SearchHit {
   database?: string | null;
 }
 
+import type { CalendarEvent } from '../lib/gcal';
+
+export type { CalendarEvent };
+
+export type CalendarResponse =
+  | { configured: boolean; connected: false; reason?: 'not-connected' | 'expired' }
+  | { configured: boolean; connected: true; events: CalendarEvent[]; calendars: { id: string; name: string; color: string }[] };
+
+export interface MyTask {
+  id: string;
+  title: string;
+  database: string;
+  databaseTitle: string;
+  databaseIcon: string;
+  space: string;
+  spaceName: string;
+  due: string | null;
+  status: { name: string; color: string } | null;
+  priority: { name: string; color: string } | null;
+  done: boolean;
+  toggle: { propId: string; done: string | true; open: string | null } | null;
+}
+
 export type UpdateResult = { ok: true; page: Page } | { ok: false; conflict: boolean; error: string; current?: Page };
 
 export const api = {
@@ -105,6 +128,25 @@ export const api = {
   },
   async search(q: string): Promise<SearchHit[]> {
     return (await call<{ results: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`)).data.results;
+  },
+  async calendar(from: Date, to: Date): Promise<CalendarResponse> {
+    const r = await call<CalendarResponse & { error?: string }>(`/api/calendar?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
+    if (r.status !== 200) throw new Error(r.data.error ?? 'Could not load your calendar');
+    return r.data;
+  },
+  async calendarStatus(): Promise<{ configured: boolean; connected: boolean }> {
+    return (await call<{ configured: boolean; connected: boolean }>('/api/calendar')).data;
+  },
+  async disconnectCalendar(): Promise<void> {
+    await call('/api/calendar', { method: 'DELETE' });
+  },
+  async myTasks(): Promise<MyTask[]> {
+    return (await call<{ tasks: MyTask[] }>('/api/my-tasks')).data.tasks ?? [];
+  },
+  async addMyTask(title: string, due?: string): Promise<MyTask> {
+    const r = await call<{ task?: MyTask; error?: string }>('/api/my-tasks', { method: 'POST', body: JSON.stringify({ title, due }) });
+    if (r.status !== 201 || !r.data.task) throw new Error(r.data.error ?? 'Could not add the task');
+    return r.data.task;
   },
   async spaces(): Promise<{ spaces: Space[]; personal: string; me: string; people: Record<string, string> }> {
     return (await call<{ spaces: Space[]; personal: string; me: string; people: Record<string, string> }>('/api/spaces')).data;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckIcon, ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, FolderInputIcon, FoldersIcon, LogOutIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
+import { CalendarDaysIcon, CheckIcon, ListChecksIcon, ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, FolderInputIcon, FoldersIcon, LogOutIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
@@ -39,16 +39,28 @@ import DatabaseView from './DatabaseView';
 import PageEditor from './PageEditor';
 import RowProps from './RowProps';
 import SearchModal from './SearchModal';
+import CalendarView from './CalendarView';
+import MyTasksView from './MyTasksView';
+import UpcomingEvents from './UpcomingEvents';
 import NewSpaceDialog from './NewSpaceDialog';
 import { PageSkeleton, SidebarSkeleton } from './Skeletons';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
 import { pageRegistry } from './childpage';
 import { WorkspaceDataProvider } from './workspace-context';
 
+export type AppView = 'page' | 'my-tasks' | 'calendar';
+
 interface Props {
+  initialView?: AppView;
   initialId: string | null;
   userName: string;
   userEmail: string;
+}
+
+function viewFromPath(): AppView {
+  if (location.pathname.startsWith('/my-tasks')) return 'my-tasks';
+  if (location.pathname.startsWith('/calendar')) return 'calendar';
+  return 'page';
 }
 
 function idFromPath(): string | null {
@@ -72,12 +84,13 @@ export default function Workspace(props: Props) {
   );
 }
 
-function WorkspaceInner({ initialId, userName, userEmail }: Props) {
+function WorkspaceInner({ initialId, initialView = 'page', userName, userEmail }: Props) {
   const [pages, setPages] = useState<PageMeta[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(initialId);
   const [page, setPage] = useState<Page | null>(null);
   const [rowDb, setRowDb] = useState<Page | null>(null);
   const [missing, setMissing] = useState(false);
+  const [view, setView] = useState<AppView>(initialView);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false); // the server could not be reached
   const [searchOpen, setSearchOpen] = useState(false);
@@ -115,12 +128,22 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     if (replace) history.replaceState(null, '', url);
     else history.pushState(null, '', url);
     setCurrentId(id);
+    setView('page');
     setOpenMobile(false);
   }, [setOpenMobile]);
 
+  const openView = (v: AppView) => {
+    history.pushState(null, '', v === 'my-tasks' ? '/my-tasks' : v === 'calendar' ? '/calendar' : '/');
+    setView(v);
+    setOpenMobile(false);
+  };
+
   // Back/forward buttons
   useEffect(() => {
-    const on = () => setCurrentId(idFromPath());
+    const on = () => {
+      setCurrentId(idFromPath());
+      setView(viewFromPath());
+    };
     window.addEventListener('popstate', on);
     return () => window.removeEventListener('popstate', on);
   }, []);
@@ -150,6 +173,11 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
       setPersonalId(sp.personal);
       setPeople(sp.people ?? {});
       if (idFromPath()) return; // the page's own space is picked once it loads
+      if (viewFromPath() !== 'page') {
+        setActiveSpace(sp.spaces.find((x) => x.id === localStorage.getItem('wn_space'))?.id ?? sp.personal);
+        setLoading(false);
+        return;
+      }
       let saved: string | null = null;
       try {
         saved = localStorage.getItem('wn_space');
@@ -388,6 +416,16 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
+              <SidebarMenuButton className="text-sidebar-foreground/80" isActive={view === 'my-tasks'} onClick={() => openView('my-tasks')}>
+                <ListChecksIcon /> <span>My tasks</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton className="text-sidebar-foreground/80" isActive={view === 'calendar'} onClick={() => openView('calendar')}>
+                <CalendarDaysIcon /> <span>Calendar</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
               <SidebarMenuButton className="text-sidebar-foreground/80" onClick={() => openSettings('preferences')}>
                 <SettingsIcon /> <span>Settings</span>
               </SidebarMenuButton>
@@ -396,6 +434,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
         </SidebarHeader>
 
         <SidebarContent>
+          <UpcomingEvents onOpenCalendar={() => openView('calendar')} />
           <SidebarGroup>
             <SidebarGroupLabel>{activeInfo?.kind === 'personal' ? 'My pages' : 'Pages'}</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -469,8 +508,10 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           <SidebarTrigger className="text-muted-foreground" />
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
-          {loading && !loadError && <PageSkeleton />}
-          {loadError && (
+          {view === 'my-tasks' && <MyTasksView onOpen={(id) => go(id)} />}
+          {view === 'calendar' && <CalendarView />}
+          {view === 'page' && loading && !loadError && <PageSkeleton />}
+          {view === 'page' && loadError && (
             <div className={emptyState}>
               <div>
                 <p>Couldn't reach the server.</p>
@@ -481,7 +522,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && !loadError && missing && (
+          {view === 'page' && !loading && !loadError && missing && (
             <div className={emptyState}>
               <div>
                 <p>That page doesn't exist (it may have been deleted).</p>
@@ -491,7 +532,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && !loadError && !missing && !page && (
+          {view === 'page' && !loading && !loadError && !missing && !page && (
             <div className={emptyState}>
               <div>
                 <p>No pages yet.</p>
@@ -501,10 +542,10 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               </div>
             </div>
           )}
-          {!loading && !loadError && page && page.kind === 'database' && (
+          {view === 'page' && !loading && !loadError && page && page.kind === 'database' && (
             <DatabaseView key={page.id} dbId={page.id} onMeta={onMeta} onOpenRow={(id) => go(id)} />
           )}
-          {!loading && !loadError && page && page.kind !== 'database' && (
+          {view === 'page' && !loading && !loadError && page && page.kind !== 'database' && (
             <PageEditor
               key={`${page.id}:${reloadKey}`}
               page={page}

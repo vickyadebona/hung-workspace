@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api, type Space } from './api';
+import IconPicker from './IconPicker';
 
 interface Props {
   open: boolean;
@@ -58,7 +59,7 @@ export default function NewSpaceDialog({ open, onOpenChange, onCreated }: Props)
             <DialogDescription>A separate place for one project or topic. Only people you add can see it.</DialogDescription>
           </DialogHeader>
           <div className="flex gap-2">
-            <Input className="w-14 text-center" value={icon} maxLength={4} placeholder="📁" aria-label="Space icon" onChange={(e) => setIcon(e.target.value)} />
+            <IconPicker className="grid size-8 flex-none place-items-center rounded-lg border text-lg hover:bg-muted" label="Space icon" placeholder="📁" value={icon} onChange={setIcon} />
             <Input ref={nameInput} value={name} maxLength={60} placeholder="Space name" aria-label="Space name" onChange={(e) => setName(e.target.value)} />
           </div>
           {error && (

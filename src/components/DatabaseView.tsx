@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyView, type PropertyDef, type PropValue, type Row, type View } from '../lib/dbschema';
 import { Button } from '@/components/ui/button';
 import { api, type Page, type PageMeta } from './api';
+import IconPicker from './IconPicker';
 import { Banner, iconInput, titleInput } from './PageEditor';
 import { addOption } from './dbops';
 import DbToolbar from './DbToolbar';
@@ -205,6 +206,7 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
 
   const common = {
     ctx,
+    onView: (patch: Partial<View>) => saveViews(views.map((v) => (v.id === view.id ? { ...v, ...patch } : v))),
     schema,
     view,
     rows: shown,
@@ -223,15 +225,14 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
         <Banner action={<Button size="sm" variant="outline" onClick={() => setError(null)}>Dismiss</Button>}>{error}</Banner>
       )}
       <div className="mb-3 flex items-center gap-2">
-        <input
+        <IconPicker
           className={iconInput}
-          value={icon}
-          maxLength={4}
+          label="Database icon"
           placeholder="🗂️"
-          aria-label="Database icon"
-          onChange={(e) => {
-            setIcon(e.target.value);
-            saveMeta({ icon: e.target.value });
+          value={icon}
+          onChange={(v) => {
+            setIcon(v);
+            saveMeta({ icon: v });
           }}
         />
         <input

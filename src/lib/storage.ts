@@ -114,6 +114,10 @@ export interface PageStore {
   /** Names for the people who have signed in (used to show a Person property as a name instead of an email). */
   listUsers(): Promise<UserProfile[]>;
   saveUser(user: UserProfile): Promise<void>;
+  /** A person's connection to an outside service (already sealed by the caller; the store never sees the plain text). */
+  getIntegration(email: string, provider: string): Promise<string | null>;
+  saveIntegration(email: string, provider: string, sealed: string): Promise<void>;
+  deleteIntegration(email: string, provider: string): Promise<void>;
 }
 
 export interface UserProfile {
@@ -231,6 +235,8 @@ export abstract class BasePageStore implements PageStore {
   protected abstract insertSpace(space: Space): Promise<boolean>;
   protected abstract readUsers(): Promise<UserProfile[]>;
   protected abstract writeUser(user: UserProfile): Promise<void>;
+  protected abstract readIntegration(email: string, provider: string): Promise<string | null>;
+  protected abstract writeIntegration(email: string, provider: string, sealed: string | null): Promise<void>;
 
   /** Run a mutation on its own. The file store overrides this to queue edits (one process, one writer). */
   protected exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -244,6 +250,18 @@ export abstract class BasePageStore implements PageStore {
 
   async listSpaces(): Promise<Space[]> {
     return this.readSpaces();
+  }
+
+  async getIntegration(email: string, provider: string): Promise<string | null> {
+    return this.readIntegration(email.trim().toLowerCase(), provider);
+  }
+
+  async saveIntegration(email: string, provider: string, sealed: string): Promise<void> {
+    await this.exclusive(() => this.writeIntegration(email.trim().toLowerCase(), provider, sealed));
+  }
+
+  async deleteIntegration(email: string, provider: string): Promise<void> {
+    await this.exclusive(() => this.writeIntegration(email.trim().toLowerCase(), provider, null));
   }
 
   async listUsers(): Promise<UserProfile[]> {
@@ -367,7 +385,7 @@ export abstract class BasePageStore implements PageStore {
       space,
       title: input.title?.trim() || (kind === 'database' ? 'Untitled database' : 'Untitled'),
       parent,
-      icon: input.icon ?? (kind === 'database' ? '🗂️' : ''),
+      icon: input.icon ?? (kind === 'database' ? '🗂️' : '😊'),
       order: siblings.length ? Math.max(...siblings.map((s) => s.order)) + 1 : 0,
       createdAt: now,
       updatedAt: now,
@@ -739,6 +757,34 @@ export class FilePageStore extends BasePageStore {
       if (e.code === 'ENOENT') return [];
       throw e;
     }
+  }
+
+  private get integrationsFile() {
+    return path.join(this.dir, '.integrations.json');
+  }
+
+  private async readIntegrations(): Promise<Record<string, string>> {
+    try {
+      const v = JSON.parse(await fs.readFile(this.integrationsFile, 'utf8'));
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    } catch (e: any) {
+      if (e.code === 'ENOENT') return {};
+      throw e;
+    }
+  }
+
+  protected async readIntegration(email: string, provider: string): Promise<string | null> {
+    return (await this.readIntegrations())[`${email}|${provider}`] ?? null;
+  }
+
+  protected async writeIntegration(email: string, provider: string, sealed: string | null): Promise<void> {
+    const all = await this.readIntegrations();
+    if (sealed === null) delete all[`${email}|${provider}`];
+    else all[`${email}|${provider}`] = sealed;
+    await this.ensureDir();
+    const tmp = `${this.integrationsFile}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(all, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(tmp, this.integrationsFile);
   }
 
   protected async writeUser(user: UserProfile): Promise<void> {
