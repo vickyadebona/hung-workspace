@@ -40,6 +40,15 @@ While developing, `npm run dev` gives instant reloads.
 - Nesting is stored as a `parent` id, so moving a page never renames files.
 - A **database** is a page with `kind: database` plus its properties (`schema`) and saved views (`views`) in the frontmatter. Each **row** is its own page file with `database: <id>` and `props:` (values keyed by property id), so rows can hold full notes too. Select values store option ids, so renaming an option never breaks rows.
 
+## Install it as a Mac app
+
+Hung Workspace is an installable web app, so it can live in your Dock with its own window:
+
+- **Chrome or Edge**: open the site, then the install icon in the address bar (or menu → Cast, save and share → Install Hung Workspace).
+- **Safari (macOS Sonoma or newer)**: open the site, then File → Add to Dock.
+
+It always shows the live site, so updates arrive by themselves. A menu-bar icon and a global shortcut need a small native wrapper (Electron or Tauri); that is a later, Mac-only step.
+
 ## Spaces and privacy (Phase 4)
 
 Every page lives in exactly one **space**:
