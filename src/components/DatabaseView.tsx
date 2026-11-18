@@ -5,6 +5,8 @@ import { api, type Page, type PageMeta } from './api';
 import { Banner, iconInput, titleInput } from './PageEditor';
 import { addOption } from './dbops';
 import DbToolbar from './DbToolbar';
+import { useCellCtx } from './cells';
+import { useDatabases } from './workspace-context';
 import { BoardView, CalendarView, ListView, TableView } from './DbViews';
 
 interface Props {
@@ -121,8 +123,10 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
   /* ---- rows ---- */
   const setProp = (rowId: string, propId: string, value: PropValue) => {
     setRows((rs) => rs.map((r) => (r.id === rowId ? { ...r, props: { ...r.props, [propId]: value } } : r)));
+    const isRelation = dbRef.current?.schema?.find((d) => d.id === propId)?.type === 'relation';
     track(api.update(rowId, { props: { [propId]: value } })).then((res) => {
-      if (!res.ok) load();
+      // a change to a link also changes the other side (and rollups), so take a fresh copy of the rows
+      if (!res.ok || isRelation) load();
     });
   };
 
@@ -170,6 +174,8 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
   );
 
   const schema = db?.schema ?? [];
+  const ctx = useCellCtx(dbId, db?.schema, db?.space);
+  const databases = useDatabases(db?.space);
   const views = db?.views ?? [];
   const view = views.find((v) => v.id === activeId) ?? views[0];
   const shown = useMemo(() => (view ? applyView(rows as Row[], view, schema) : []), [rows, view, schema]);
@@ -187,7 +193,17 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
     );
   if (!db || !view) return <div className="grid h-[60vh] place-items-center text-muted-foreground">Loading…</div>;
 
+  const addRelation = async (opts: { name: string; target: string; twoWay: boolean; reverseName?: string; single?: boolean }) => {
+    const r = await api.addRelation(dbId, opts);
+    if (r.ok) {
+      await load();
+      ctx.reload();
+    }
+    return r;
+  };
+
   const common = {
+    ctx,
     schema,
     view,
     rows: shown,
@@ -228,7 +244,18 @@ export default function DatabaseView({ dbId, onMeta, onOpenRow }: Props) {
           }}
         />
       </div>
-      <DbToolbar schema={schema} views={views} view={view} onSelectView={selectView} onViews={saveViews} onSchema={saveSchema} />
+      <DbToolbar
+        schema={schema}
+        views={views}
+        view={view}
+        onSelectView={selectView}
+        onViews={saveViews}
+        onSchema={saveSchema}
+        selfId={dbId}
+        databases={databases}
+        ctx={ctx}
+        onAddRelation={addRelation}
+      />
       {view.type === 'table' && <TableView {...common} />}
       {view.type === 'board' && <BoardView {...common} />}
       {view.type === 'list' && <ListView {...common} />}

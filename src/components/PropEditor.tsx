@@ -8,6 +8,24 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Input } from '@/components/ui/input';
 import type { Color, PropertyDef, PropValue } from '../lib/dbschema';
 import Popover from './Popover';
+import { nameOf, titleOf, type CellCtx, emptyCtx } from './cells';
+
+/** A person: a small round initial and their name. */
+export function PersonChip({ name }: { name: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pr-2 pl-0.5 text-xs">
+      <span className="grid size-4 place-items-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground uppercase" aria-hidden>
+        {name.trim().charAt(0) || '?'}
+      </span>
+      {name}
+    </span>
+  );
+}
+
+/** A linked row, shown by its title. */
+export function RowChip({ title }: { title: string }) {
+  return <span className="inline-flex max-w-48 items-center truncate rounded-md bg-muted px-1.5 py-0.5 text-xs">{title || 'Untitled'}</span>;
+}
 
 export function Chip({ name, color }: { name: string; color: Color }) {
   return (
@@ -31,9 +49,11 @@ interface Props {
   onChange: (v: PropValue) => void;
   /** Create a new select option by name; resolves to its id, or null if it could not be created. */
   onCreateOption?: (propId: string, name: string) => Promise<string | null>;
+  /** People, members and linked databases (needed for person, relation and rollup properties). */
+  ctx?: CellCtx;
 }
 
-export default function PropEditor({ def, value, onChange, onCreateOption }: Props) {
+export default function PropEditor({ def, value, onChange, onCreateOption, ctx = emptyCtx }: Props) {
   switch (def.type) {
     case 'text':
     case 'url':
@@ -54,6 +74,12 @@ export default function PropEditor({ def, value, onChange, onCreateOption }: Pro
     case 'select':
     case 'multiselect':
       return <SelectLike def={def} value={value} onChange={onChange} onCreateOption={onCreateOption} />;
+    case 'person':
+      return <PersonEditor def={def} value={value} onChange={onChange} ctx={ctx} />;
+    case 'relation':
+      return <RelationEditor def={def} value={value} onChange={onChange} ctx={ctx} />;
+    case 'rollup':
+      return <RollupCell def={def} value={value} />;
   }
 }
 
@@ -187,4 +213,124 @@ function SelectLike({ def, value, onChange, onCreateOption }: Props) {
       )}
     </Popover>
   );
+}
+
+const triggerCls =
+  'flex min-h-7 w-full flex-wrap items-center gap-1 rounded-md px-1.5 py-0.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:bg-muted';
+
+function PersonEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx }) {
+  const selected = Array.isArray(value) ? value : [];
+  const toggle = (email: string) => {
+    const next = selected.includes(email) ? selected.filter((x) => x !== email) : [...selected, email];
+    onChange(next.length ? next : null);
+  };
+  return (
+    <Popover
+      className="w-64 p-0"
+      trigger={
+        <button className={triggerCls} aria-label={def.name} type="button">
+          {selected.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
+          {selected.map((e) => (
+            <PersonChip key={e} name={nameOf(ctx, e)} />
+          ))}
+        </button>
+      }
+    >
+      {() => (
+        <Command aria-label={`${def.name} people`}>
+          <CommandInput placeholder="Find a person…" />
+          <CommandList>
+            <CommandEmpty>No one else is in this space yet.</CommandEmpty>
+            <CommandGroup>
+              {ctx.members.map((m) => (
+                <CommandItem key={m.email} value={`${m.name} ${m.email}`} onSelect={() => toggle(m.email)}>
+                  <PersonChip name={m.name} />
+                  <span className="truncate text-xs text-muted-foreground">{m.email}</span>
+                  {selected.includes(m.email) && <CheckIcon className="ml-auto" />}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      )}
+    </Popover>
+  );
+}
+
+function RelationEditor({ def, value, onChange, ctx }: { def: PropertyDef; value: PropValue; onChange: (v: PropValue) => void; ctx: CellCtx }) {
+  const dbId = def.relation?.database ?? '';
+  const info = ctx.related[dbId];
+  const single = def.relation?.single === true;
+  const selected = Array.isArray(value) ? value : [];
+  const toggle = (id: string, close: () => void) => {
+    if (single) {
+      onChange(selected[0] === id ? null : [id]);
+      close();
+      return;
+    }
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onChange(next.length ? next : null);
+  };
+  return (
+    <Popover
+      className="w-72 p-0"
+      trigger={
+        <button className={triggerCls} aria-label={def.name} type="button">
+          {selected.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
+          {selected.map((id) => (
+            <RowChip key={id} title={titleOf(ctx, dbId, id) ?? '…'} />
+          ))}
+        </button>
+      }
+    >
+      {(close) => (
+        <Command aria-label={`${def.name} rows`}>
+          <CommandInput placeholder={`Find in ${info?.title ?? 'database'}…`} />
+          <CommandList>
+            <CommandEmpty>{info ? 'Nothing to link to yet.' : 'Loading…'}</CommandEmpty>
+            <CommandGroup>
+              {(info?.rows ?? []).map((r) => (
+                <CommandItem key={r.id} value={`${r.title} ${r.id}`} onSelect={() => toggle(r.id, close)}>
+                  <span className="truncate">{r.title || 'Untitled'}</span>
+                  {selected.includes(r.id) && <CheckIcon className="ml-auto" />}
+                </CommandItem>
+              ))}
+              {single && selected.length > 0 && (
+                <CommandItem
+                  value="__clear__"
+                  className="text-muted-foreground"
+                  onSelect={() => {
+                    onChange(null);
+                    close();
+                  }}
+                >
+                  Clear
+                </CommandItem>
+              )}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      )}
+    </Popover>
+  );
+}
+
+/** A worked-out value (read only): a number, or a percentage with a small bar, or a date. */
+export function RollupCell({ def, value }: { def: PropertyDef; value: PropValue }) {
+  const fn = def.rollup?.fn;
+  if (value === null || value === undefined) return <span className="px-1.5 text-sm text-muted-foreground">—</span>;
+  if ((fn === 'percent_checked' || fn === 'percent_option') && typeof value === 'number') {
+    return (
+      <span className="flex items-center gap-2 px-1.5 text-sm" aria-label={`${def.name}: ${value}%`}>
+        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted" aria-hidden>
+          <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+        </span>
+        {value}%
+      </span>
+    );
+  }
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return <span className="px-1.5 text-sm">{new Date(value + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>;
+  }
+  return <span className="px-1.5 text-sm">{String(value)}</span>;
 }

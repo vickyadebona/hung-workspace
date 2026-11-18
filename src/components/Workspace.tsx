@@ -41,6 +41,7 @@ import RowProps from './RowProps';
 import SearchModal from './SearchModal';
 import NewSpaceDialog from './NewSpaceDialog';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
+import { WorkspaceDataProvider } from './workspace-context';
 
 interface Props {
   initialId: string | null;
@@ -82,6 +83,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [personalId, setPersonalId] = useState<string | null>(null);
+  const [people, setPeople] = useState<Record<string, string>>({});
   const [activeSpace, setActiveSpaceState] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<PageMeta | null>(null);
   const logoutForm = useRef<HTMLFormElement>(null);
@@ -143,6 +145,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
     Promise.all([api.spaces(), refreshList()]).then(([sp, list]) => {
       setSpaces(sp.spaces);
       setPersonalId(sp.personal);
+      setPeople(sp.people ?? {});
       if (idFromPath()) return; // the page's own space is picked once it loads
       let saved: string | null = null;
       try {
@@ -305,10 +308,22 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
   };
   const hasKids = (id: string) => (children.get(id) ?? []).length > 0;
   const activeInfo = spaces.find((x) => x.id === activeSpace);
+  /** The pages above a page, outermost first (stops at the top of its space). */
+  const ancestorsOf = (p: Page): PageMeta[] => {
+    if (p.database) return [];
+    const byId = new Map(pages.map((x) => [x.id, x]));
+    const chain: PageMeta[] = [];
+    let cur = p.parent ? byId.get(p.parent) : undefined;
+    while (cur && chain.length < 12) {
+      chain.unshift(cur);
+      cur = cur.parent ? byId.get(cur.parent) : undefined;
+    }
+    return chain;
+  };
   const emptyState = 'grid h-[60vh] place-items-center text-center text-muted-foreground';
 
   return (
-    <>
+    <WorkspaceDataProvider value={{ people, spaces, pages }}>
       <Sidebar>
         <SidebarHeader>
           <SidebarMenu>
@@ -467,6 +482,15 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
               page={page}
               theme={theme.effective}
               onMeta={onMeta}
+              ancestors={ancestorsOf(page)}
+              subpages={page.database ? [] : (children.get(page.id) ?? [])}
+              spaceName={activeInfo?.name}
+              onOpen={(id) => go(id)}
+              onSubCreated={async (child) => {
+                await refreshList();
+                setExpanded((prev) => new Set(prev).add(child.parent ?? ''));
+                go(child.id);
+              }}
               extra={page.database && rowDb ? <RowProps key={`${page.id}:${reloadKey}`} row={page} db={rowDb} onOpenDb={() => go(rowDb.id)} onDb={setRowDb} /> : undefined}
               onReload={() => {
                 refreshList();
@@ -511,7 +535,7 @@ function WorkspaceInner({ initialId, userName, userEmail }: Props) {
           setDeleting(null);
         }}
       />
-    </>
+    </WorkspaceDataProvider>
   );
 }
 

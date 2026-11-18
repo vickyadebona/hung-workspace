@@ -5,6 +5,7 @@ import matter from 'gray-matter';
 import {
   defaultSchema,
   defaultViews,
+  isDerived,
   mergeProps,
   reconcileProps,
   sanitizeSchema,
@@ -110,6 +111,14 @@ export interface PageStore {
   createSpace(space: Space): Promise<boolean>;
   /** Read-modify-write one space on its own. Throws 'Space not found' if it does not exist. */
   mutateSpace(id: string, fn: (space: Space) => Space): Promise<Space>;
+  /** Names for the people who have signed in (used to show a Person property as a name instead of an email). */
+  listUsers(): Promise<UserProfile[]>;
+  saveUser(user: UserProfile): Promise<void>;
+}
+
+export interface UserProfile {
+  email: string;
+  name: string;
 }
 
 export interface SearchHit {
@@ -161,6 +170,21 @@ function subtree(all: PageMeta[], id: string): string[] {
   return [...set];
 }
 
+/** Keep only links to rows that really exist in the database a relation points at. */
+function pruneRelationProps(all: PageMeta[], schema: PropertyDef[], props: Props): Props {
+  const out: Props = { ...props };
+  for (const def of schema) {
+    if (def.type !== 'relation' || isDerived(def)) continue;
+    const v = out[def.id];
+    if (!Array.isArray(v)) continue;
+    const valid = new Set(all.filter((p) => p.database === def.relation!.database).map((p) => p.id));
+    const kept = v.filter((id) => valid.has(id));
+    if (kept.length) out[def.id] = kept;
+    else delete out[def.id];
+  }
+  return out;
+}
+
 export function cleanSpace(s: Space): Space {
   const owner = String(s.owner).trim().toLowerCase();
   const members = [...new Set([owner, ...(Array.isArray(s.members) ? s.members : []).map((m) => String(m).trim().toLowerCase())])].filter(Boolean);
@@ -205,6 +229,8 @@ export abstract class BasePageStore implements PageStore {
   protected abstract writeSpace(space: Space): Promise<void>;
   /** Insert only if absent; true when inserted. */
   protected abstract insertSpace(space: Space): Promise<boolean>;
+  protected abstract readUsers(): Promise<UserProfile[]>;
+  protected abstract writeUser(user: UserProfile): Promise<void>;
 
   /** Run a mutation on its own. The file store overrides this to queue edits (one process, one writer). */
   protected exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -218,6 +244,16 @@ export abstract class BasePageStore implements PageStore {
 
   async listSpaces(): Promise<Space[]> {
     return this.readSpaces();
+  }
+
+  async listUsers(): Promise<UserProfile[]> {
+    return this.readUsers();
+  }
+
+  async saveUser(user: UserProfile): Promise<void> {
+    const email = user.email.trim().toLowerCase();
+    if (!email) return;
+    await this.exclusive(() => this.writeUser({ email, name: user.name.trim().slice(0, 80) || email.split('@')[0] }));
   }
 
   async saveSpace(space: Space): Promise<void> {
@@ -251,6 +287,13 @@ export abstract class BasePageStore implements PageStore {
     if (!root) throw new Error('Page not found');
     if (root.database) throw new Error('Move the whole database, not a single row');
     const ids = subtree(all, id);
+    const inside = new Set(ids);
+    const linked = all.some((p) => {
+      if (p.kind !== 'database') return false;
+      const touchesInside = inside.has(p.id);
+      return (p.schema ?? []).some((d) => d.type === 'relation' && d.relation && inside.has(d.relation.database) !== touchesInside);
+    });
+    if (linked) throw new Error('This database is linked to another database. Remove its relation properties before moving it to another space.');
     if (root.space === space && ids.length === 1 && root.parent === null) return [];
     const now = new Date().toISOString();
     for (const pid of ids) {
@@ -304,7 +347,7 @@ export abstract class BasePageStore implements PageStore {
         updatedAt: now,
         kind: 'page',
         database: db.id,
-        props: mergeProps(db.schema ?? [], {}, input.props ?? {}),
+        props: pruneRelationProps(all, db.schema ?? [], mergeProps(db.schema ?? [], {}, input.props ?? {})),
         body: input.body ?? '',
       };
       await this.write(row);
@@ -400,14 +443,14 @@ export abstract class BasePageStore implements PageStore {
       if (!current.database) throw new Error('Only database rows have properties');
       const db = await this.get(current.database);
       if (!db || db.kind !== 'database') throw new Error('Database not found');
-      next.props = mergeProps(db.schema ?? [], current.props, patch.props);
+      next.props = pruneRelationProps(await this.list(), db.schema ?? [], mergeProps(db.schema ?? [], current.props, patch.props));
     }
 
     let reconcileRows = false;
     if (patch.schema !== undefined || patch.views !== undefined) {
       if (current.kind !== 'database') throw new Error('Only databases have a schema or views');
       if (patch.schema !== undefined) {
-        next.schema = sanitizeSchema(patch.schema);
+        next.schema = await this.checkRelations(current, sanitizeSchema(patch.schema));
         reconcileRows = true;
       }
       // views are always re-checked against the (possibly new) schema
@@ -423,6 +466,8 @@ export abstract class BasePageStore implements PageStore {
       return null; // lost a race; caller retries from fresh state
     }
 
+    if (patch.schema !== undefined) await this.dropOtherSides(current, next);
+
     if (reconcileRows) {
       // Drop row values that no longer fit the schema (deleted property, removed option, changed type).
       for (const row of await this.readRows(id)) {
@@ -431,6 +476,56 @@ export abstract class BasePageStore implements PageStore {
       }
     }
     return next;
+  }
+
+  /**
+   * Relations must point at a database in the same space, and the "other side" of a two-way relation must still have
+   * its partner. Returns the schema with any orphaned other sides dropped.
+   */
+  private async checkRelations(db: Page, schema: PropertyDef[]): Promise<PropertyDef[]> {
+    if (!schema.some((d) => d.type === 'relation')) return schema;
+    const all = await this.list();
+    const kept: PropertyDef[] = [];
+    for (const def of schema) {
+      const rel = def.type === 'relation' ? def.relation : undefined;
+      if (!rel) {
+        kept.push(def);
+        continue;
+      }
+      const target = rel.database === db.id ? { ...db, schema } : all.find((p) => p.id === rel.database);
+      if (!target || target.kind !== 'database' || target.space !== db.space) {
+        throw new Error('A relation can only point at a database in the same space');
+      }
+      if (rel.reverseOf) {
+        const forward = (target.schema ?? []).find((d) => d.id === rel.reverseOf);
+        if (!forward || forward.type !== 'relation' || forward.relation?.reverseOf || forward.relation?.database !== db.id) continue; // orphaned: drop it
+      }
+      kept.push(def);
+    }
+    return kept;
+  }
+
+  /** When a relation property is deleted, the other side that showed it in the partner database goes with it. */
+  private async dropOtherSides(before: Page, after: Page): Promise<void> {
+    const gone = (before.schema ?? []).filter((d) => d.type === 'relation' && !d.relation?.reverseOf && !(after.schema ?? []).some((x) => x.id === d.id));
+    for (const f of gone) {
+      const targetId = f.relation!.database;
+      if (targetId === after.id) {
+        const cleaned = (after.schema ?? []).filter((d) => d.relation?.reverseOf !== f.id);
+        if (cleaned.length !== (after.schema ?? []).length) {
+          after.schema = sanitizeSchema(cleaned);
+          after.views = sanitizeViews(after.views ?? [], after.schema);
+          await this.write(after);
+        }
+        continue;
+      }
+      const target = await this.get(targetId);
+      if (!target || target.kind !== 'database') continue;
+      const cleaned = (target.schema ?? []).filter((d) => d.relation?.reverseOf !== f.id);
+      if (cleaned.length === (target.schema ?? []).length) continue;
+      const schema = sanitizeSchema(cleaned);
+      await this.write({ ...target, schema, views: sanitizeViews(target.views ?? [], schema) });
+    }
   }
 
   remove(id: string): Promise<string[]> {
@@ -630,5 +725,27 @@ export class FilePageStore extends BasePageStore {
     if (all.some((s) => s.id === space.id)) return false;
     await this.saveSpaces([...all, space]);
     return true;
+  }
+
+  private get usersFile() {
+    return path.join(this.dir, '.users.json');
+  }
+
+  protected async readUsers(): Promise<UserProfile[]> {
+    try {
+      const list = JSON.parse(await fs.readFile(this.usersFile, 'utf8'));
+      return Array.isArray(list) ? list.filter((u) => u && typeof u.email === 'string') : [];
+    } catch (e: any) {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    }
+  }
+
+  protected async writeUser(user: UserProfile): Promise<void> {
+    const all = (await this.readUsers()).filter((u) => u.email !== user.email);
+    await this.ensureDir();
+    const tmp = `${this.usersFile}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify([...all, user], null, 2) + '\n', 'utf8');
+    await fs.rename(tmp, this.usersFile);
   }
 }

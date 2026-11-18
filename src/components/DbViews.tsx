@@ -2,20 +2,22 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   groupRows,
   isoDate,
+  nestRows,
   monthGrid,
   type PropertyDef,
   type PropValue,
   type Row,
   type View,
 } from '../lib/dbschema';
-import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, PlusIcon } from 'lucide-react';
+import { CalendarIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CornerDownRightIcon, LinkIcon, PlusIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import DeleteButton from './ConfirmDelete';
-import PropEditor, { Chip, cellInput, isSafeUrl } from './PropEditor';
+import PropEditor, { Chip, PersonChip, RollupCell, RowChip, cellInput, isSafeUrl } from './PropEditor';
+import { nameOf, titleOf, type CellCtx } from './cells';
 import SimpleSelect from './SimpleSelect';
 
 export interface ViewProps {
@@ -29,6 +31,7 @@ export interface ViewProps {
   onTitle: (rowId: string, title: string) => void;
   onDelete: (rowId: string) => void;
   onCreateOption: (propId: string, name: string) => Promise<string | null>;
+  ctx: CellCtx;
 }
 
 const meta = 'inline-flex items-center gap-1 text-xs text-muted-foreground';
@@ -40,7 +43,7 @@ function fmtDate(iso: string): string {
 }
 
 /** Read-only display of one value (used on cards, list rows and calendar chips). */
-export function ValueView({ def, value }: { def: PropertyDef; value: PropValue }) {
+export function ValueView({ def, value, ctx }: { def: PropertyDef; value: PropValue; ctx: CellCtx }) {
   if (value === null || value === undefined || value === '' || (Array.isArray(value) && !value.length)) return null;
   switch (def.type) {
     case 'select':
@@ -55,6 +58,24 @@ export function ValueView({ def, value }: { def: PropertyDef; value: PropValue }
         </>
       );
     }
+    case 'person':
+      return (
+        <>
+          {(Array.isArray(value) ? value : []).map((e) => (
+            <PersonChip key={e} name={nameOf(ctx, e)} />
+          ))}
+        </>
+      );
+    case 'relation':
+      return (
+        <>
+          {(Array.isArray(value) ? value : []).map((id) => (
+            <RowChip key={id} title={titleOf(ctx, def.relation?.database ?? '', id) ?? '…'} />
+          ))}
+        </>
+      );
+    case 'rollup':
+      return <RollupCell def={def} value={value} />;
     case 'date':
       return (
         <span className={meta}>
@@ -119,9 +140,50 @@ function RowDelete({ row, onDelete, className }: { row: Row; onDelete: (id: stri
 // Row actions stay out of the way until the row is hovered or focused (always visible on touch screens).
 const reveal = 'md:opacity-0 md:group-hover/row:opacity-100 md:focus-visible:opacity-100';
 
+/** Rows in display order, nested under their parents when the view asks for it, with collapsing. */
+function useNested(rows: Row[], nestBy: string | undefined) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const list = useMemo(() => {
+    if (!nestBy) return rows.map((row) => ({ row, depth: 0, hasChildren: false }));
+    const all = nestRows(rows, nestBy);
+    const out: typeof all = [];
+    let hideDeeperThan: number | null = null;
+    for (const n of all) {
+      if (hideDeeperThan !== null && n.depth > hideDeeperThan) continue;
+      hideDeeperThan = null;
+      out.push(n);
+      if (n.hasChildren && collapsed.has(n.row.id)) hideDeeperThan = n.depth;
+    }
+    return out;
+  }, [rows, nestBy, collapsed]);
+  const toggle = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  return { list, collapsed, toggle };
+}
+
+/** The little arrow in front of a row that has sub-items. */
+function NestToggle({ depth, hasChildren, open, onToggle, label }: { depth: number; hasChildren: boolean; open: boolean; onToggle: () => void; label: string }) {
+  return (
+    <span className="flex flex-none items-center" style={{ paddingLeft: depth * 18 }}>
+      {hasChildren ? (
+        <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`} onClick={onToggle}>
+          {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        </Button>
+      ) : (
+        <span className="inline-block size-6" />
+      )}
+    </span>
+  );
+}
+
 /* ------------------------------ Table ------------------------------ */
 
 export function TableView(p: ViewProps) {
+  const nest = useNested(p.rows, p.view.nestBy);
   return (
     <div>
       <Table className="min-w-[600px]">
@@ -137,19 +199,25 @@ export function TableView(p: ViewProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {p.rows.map((r) => (
+          {nest.list.map(({ row: r, depth, hasChildren }) => (
             <TableRow key={r.id} data-row-id={r.id} className="group/row hover:bg-transparent">
               <TableCell className="px-1 py-0.5">
                 <div className="flex items-center gap-1">
+                  {p.view.nestBy && <NestToggle depth={depth} hasChildren={hasChildren} open={!nest.collapsed.has(r.id)} onToggle={() => nest.toggle(r.id)} label={r.title || 'row'} />}
                   <TitleInput row={r} autoFocus={p.focusRowId === r.id} onTitle={p.onTitle} />
                   <Button variant="outline" size="xs" className={cn('text-muted-foreground', reveal)} onClick={() => p.onOpen(r.id)} aria-label={`Open ${r.title || 'Untitled'}`}>
                     Open
                   </Button>
+                  {p.view.nestBy && (
+                    <Button variant="ghost" size="icon-xs" className={cn('text-muted-foreground', reveal)} aria-label={`Add a sub-item to ${r.title || 'row'}`} title="Add a sub-item" onClick={() => p.onAdd({ props: { [p.view.nestBy!]: [r.id] } })}>
+                      <CornerDownRightIcon />
+                    </Button>
+                  )}
                 </div>
               </TableCell>
               {p.schema.map((d) => (
                 <TableCell key={d.id} className="px-1 py-0.5 whitespace-normal">
-                  <PropEditor def={d} value={r.props[d.id] ?? null} onChange={(v) => p.onProp(r.id, d.id, v)} onCreateOption={p.onCreateOption} />
+                  <PropEditor def={d} value={r.props[d.id] ?? null} onChange={(v) => p.onProp(r.id, d.id, v)} onCreateOption={p.onCreateOption} ctx={p.ctx} />
                 </TableCell>
               ))}
               <TableCell className="px-1 py-0.5 text-right">
@@ -208,7 +276,7 @@ export function BoardView(p: ViewProps) {
               </button>
               <div className="flex flex-wrap gap-1 empty:hidden">
                 {others.map((d) => (
-                  <ValueView key={d.id} def={d} value={r.props[d.id] ?? null} />
+                  <ValueView key={d.id} def={d} value={r.props[d.id] ?? null} ctx={p.ctx} />
                 ))}
               </div>
               <SimpleSelect
@@ -232,17 +300,19 @@ export function BoardView(p: ViewProps) {
 /* ------------------------------ List ------------------------------ */
 
 export function ListView(p: ViewProps) {
+  const nest = useNested(p.rows, p.view.nestBy);
   return (
     <div>
       <ul>
-        {p.rows.map((r) => (
+        {nest.list.map(({ row: r, depth, hasChildren }) => (
           <li key={r.id} data-row-id={r.id} className="group/row flex items-center gap-2.5 border-b px-1 py-1">
+            {p.view.nestBy && <NestToggle depth={depth} hasChildren={hasChildren} open={!nest.collapsed.has(r.id)} onToggle={() => nest.toggle(r.id)} label={r.title || 'row'} />}
             <Button variant="ghost" size="sm" className="-ml-1 max-w-[45%] flex-none justify-start font-medium" onClick={() => p.onOpen(r.id)}>
               <span className="truncate">{r.title || 'Untitled'}</span>
             </Button>
             <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
               {p.schema.map((d) => (
-                <ValueView key={d.id} def={d} value={r.props[d.id] ?? null} />
+                <ValueView key={d.id} def={d} value={r.props[d.id] ?? null} ctx={p.ctx} />
               ))}
             </span>
             <RowDelete row={r} onDelete={p.onDelete} className={reveal} />

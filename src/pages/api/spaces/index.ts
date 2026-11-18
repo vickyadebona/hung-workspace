@@ -5,7 +5,8 @@ import { fail, json, readJson, str } from '../../../lib/http';
 export const GET: APIRoute = async ({ locals }) => {
   try {
     const ws = workspaceFor(locals.user);
-    return json({ spaces: await ws.spaces(), personal: ws.personalId, me: ws.email });
+    const spaces = await ws.spaces();
+    return json({ spaces, personal: ws.personalId, me: ws.email, people: await ws.people() });
   } catch (e) {
     return fail(e);
   }

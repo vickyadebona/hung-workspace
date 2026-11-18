@@ -5,7 +5,7 @@ import {
   sanitizeViews,
   type Props,
 } from './dbschema.ts';
-import { BasePageStore, LEGACY_SPACE_ID, cleanSpace, type Page, type PageKind, type PageMeta, type Space } from './storage.ts';
+import { BasePageStore, LEGACY_SPACE_ID, cleanSpace, type Page, type PageKind, type PageMeta, type Space, type UserProfile } from './storage.ts';
 
 /** The one thing the store needs from a Postgres driver. Neon's HTTP driver and PGlite (tests) both fit. */
 export interface Sql {
@@ -40,6 +40,11 @@ const SCHEMA = [
     owner      text NOT NULL,
     members    jsonb NOT NULL DEFAULT '[]',
     created_at text NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS users (
+    email      text PRIMARY KEY,
+    name       text NOT NULL,
+    updated_at text NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS pages_database_idx ON pages (database_id) WHERE trashed_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS pages_parent_idx ON pages (parent) WHERE trashed_at IS NULL`,
@@ -206,5 +211,17 @@ export class PgPageStore extends BasePageStore {
       [space.id, space.name, space.icon, space.kind, space.owner, JSON.stringify(space.members), space.createdAt],
     );
     return r.rows.length > 0;
+  }
+
+  protected async readUsers(): Promise<UserProfile[]> {
+    const { rows } = await (await this.db()).query(`SELECT email, name FROM users ORDER BY email`);
+    return rows.map((r) => ({ email: r.email, name: r.name }));
+  }
+
+  protected async writeUser(user: UserProfile): Promise<void> {
+    await (await this.db()).query(
+      `INSERT INTO users (email, name, updated_at) VALUES ($1,$2,$3) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, updated_at=EXCLUDED.updated_at`,
+      [user.email, user.name, new Date().toISOString()],
+    );
   }
 }

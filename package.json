@@ -10,7 +10,8 @@
     "check": "astro check",
     "test": "node --experimental-transform-types --test tests/*.test.ts",
     "store": "node --experimental-transform-types scripts/sync-store.ts",
-    "backup": "node --disable-warning=ExperimentalWarning --experimental-transform-types scripts/backup.ts"
+    "backup": "node --disable-warning=ExperimentalWarning --experimental-transform-types scripts/backup.ts",
+    "convert-hq": "node --disable-warning=ExperimentalWarning --experimental-transform-types scripts/convert-hq.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.12",
