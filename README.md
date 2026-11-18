@@ -112,6 +112,24 @@ For pages: every page shows a **breadcrumb** above its title. In the editor, typ
 
 **My tasks** (in the sidebar, or `/my-tasks`) lists everything assigned to you across all the spaces you are in: rows of any database whose **Person** property includes you. Tasks are grouped Overdue, Today, Next 7 days, Later and No date; tick one to mark it done (it sets the database's Done status or checkbox). It works out each database's status, due date and priority from property names and types (a select called Status with an option like Done, a date called Due, a select called Priority). **Sources** lets you leave databases out (for example Milestones); that choice is remembered on this device. Type a task into the box at the top to add one for yourself: it goes into a **My tasks** database in your Personal space, created the first time, with you as Owner.
 
+## Google Calendar (read only)
+
+Each person can connect **their own** Google Calendar (Settings → Integrations, or the Connect button in the sidebar). Then:
+
+- the sidebar shows **Upcoming**: your own events for the next 3 days, from the calendars you have ticked in Google Calendar (clicking one opens it in Google Calendar);
+- **Calendar** (sidebar, or `/calendar`) shows your week, or a two-week agenda, at a glance. There is no editing: change events in Google Calendar.
+
+How it stays private and safe: it asks Google for **read-only** access to events and the list of calendars (nothing that can change a calendar). Everyone connects their own account, and the app only ever asks Google for the signed-in person's own events; there is no way to request someone else's. The permission Google hands back (a refresh token) is stored **encrypted** (AES-256-GCM, keyed from `SESSION_SECRET`), never sent to the browser, and left out of backups and exports. Changing `SESSION_SECRET` makes stored connections unreadable, so people just reconnect. **Disconnect** forgets the token and asks Google to revoke it.
+
+One-time setup in Google Cloud Console (the project that holds your sign-in credentials):
+
+1. **APIs & Services → Library**: search for **Google Calendar API** and click **Enable**.
+2. **OAuth consent screen / Google Auth Platform → Data Access → Add or remove scopes**: add `.../auth/calendar.events.readonly` and `.../auth/calendar.calendarlist.readonly`, then save.
+3. Nothing to change under Credentials: connecting reuses the same redirect addresses you already added for sign-in.
+4. While the app is in **Testing** mode, Google ends each person's connection after **7 days** and they have to reconnect. To avoid that, open **Audience** and click **Publish app**. For a private two-person tool that is fine: Google shows an "unverified app" notice on the consent screen (choose Advanced, then continue) and allows up to 100 users.
+
+Trying the screens on your Mac without a Google connection: start the app with `AUTH_DEV=1 CALENDAR_MOCK=1` to see example events (this switch does nothing on the live site).
+
 ## How two people don't overwrite each other
 
 There's no live co-editing yet. Each save carries the version it started from. If the page changed elsewhere in the meantime, saving pauses and a banner offers "Load latest", so nobody's work is silently lost.

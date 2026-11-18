@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { FoldersIcon, LogOutIcon, MonitorIcon, MoonIcon, SlidersHorizontalIcon, SunIcon, UserIcon, type LucideIcon } from 'lucide-react';
+import { FoldersIcon, LogOutIcon, PlugIcon, MonitorIcon, MoonIcon, SlidersHorizontalIcon, SunIcon, UserIcon, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Theme, ThemePref } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
@@ -7,15 +7,17 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import type { Space } from './api';
+import IntegrationsSettings from './IntegrationsSettings';
 import SpacesSettings from './SpacesSettings';
 
-export type SettingsSection = 'account' | 'preferences' | 'spaces';
+export type SettingsSection = 'account' | 'preferences' | 'spaces' | 'integrations';
 type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon; blurb: string }[] = [
   { id: 'account', label: 'My account', icon: UserIcon, blurb: 'Who you are signed in as.' },
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontalIcon, blurb: 'How the workspace looks for you.' },
   { id: 'spaces', label: 'Spaces', icon: FoldersIcon, blurb: 'Your Personal space and the shared spaces you are in.' },
+  { id: 'integrations', label: 'Integrations', icon: PlugIcon, blurb: 'Connect outside services for your own account.' },
 ];
 
 const THEMES: { value: ThemePref; label: string; icon: LucideIcon }[] = [
@@ -114,6 +116,8 @@ export default function SettingsDialog({ open, onOpenChange, user, theme, onSign
               </Select>
             </Row>
           )}
+
+          {section === 'integrations' && <IntegrationsSettings />}
 
           {section === 'spaces' && <SpacesSettings spaces={spaces} me={user.email} onSpaceChange={onSpaceChange} onLeft={onLeftSpace} onNew={onNewSpace} />}
 

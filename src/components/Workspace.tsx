@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckIcon, ListChecksIcon, ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, FolderInputIcon, FoldersIcon, LogOutIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
+import { CalendarDaysIcon, CheckIcon, ListChecksIcon, ChevronRightIcon, ChevronsUpDownIcon, DatabaseIcon, FileTextIcon, FolderInputIcon, FoldersIcon, LogOutIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, SettingsIcon, Table2Icon, Trash2Icon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
@@ -39,14 +39,16 @@ import DatabaseView from './DatabaseView';
 import PageEditor from './PageEditor';
 import RowProps from './RowProps';
 import SearchModal from './SearchModal';
+import CalendarView from './CalendarView';
 import MyTasksView from './MyTasksView';
+import UpcomingEvents from './UpcomingEvents';
 import NewSpaceDialog from './NewSpaceDialog';
 import { PageSkeleton, SidebarSkeleton } from './Skeletons';
 import SettingsDialog, { Avatar, type SettingsSection } from './SettingsDialog';
 import { pageRegistry } from './childpage';
 import { WorkspaceDataProvider } from './workspace-context';
 
-export type AppView = 'page' | 'my-tasks';
+export type AppView = 'page' | 'my-tasks' | 'calendar';
 
 interface Props {
   initialView?: AppView;
@@ -56,7 +58,9 @@ interface Props {
 }
 
 function viewFromPath(): AppView {
-  return location.pathname.startsWith('/my-tasks') ? 'my-tasks' : 'page';
+  if (location.pathname.startsWith('/my-tasks')) return 'my-tasks';
+  if (location.pathname.startsWith('/calendar')) return 'calendar';
+  return 'page';
 }
 
 function idFromPath(): string | null {
@@ -129,7 +133,7 @@ function WorkspaceInner({ initialId, initialView = 'page', userName, userEmail }
   }, [setOpenMobile]);
 
   const openView = (v: AppView) => {
-    history.pushState(null, '', v === 'my-tasks' ? '/my-tasks' : '/');
+    history.pushState(null, '', v === 'my-tasks' ? '/my-tasks' : v === 'calendar' ? '/calendar' : '/');
     setView(v);
     setOpenMobile(false);
   };
@@ -417,6 +421,11 @@ function WorkspaceInner({ initialId, initialView = 'page', userName, userEmail }
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
+              <SidebarMenuButton className="text-sidebar-foreground/80" isActive={view === 'calendar'} onClick={() => openView('calendar')}>
+                <CalendarDaysIcon /> <span>Calendar</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
               <SidebarMenuButton className="text-sidebar-foreground/80" onClick={() => openSettings('preferences')}>
                 <SettingsIcon /> <span>Settings</span>
               </SidebarMenuButton>
@@ -425,6 +434,7 @@ function WorkspaceInner({ initialId, initialView = 'page', userName, userEmail }
         </SidebarHeader>
 
         <SidebarContent>
+          <UpcomingEvents onOpenCalendar={() => openView('calendar')} />
           <SidebarGroup>
             <SidebarGroupLabel>{activeInfo?.kind === 'personal' ? 'My pages' : 'Pages'}</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -499,6 +509,7 @@ function WorkspaceInner({ initialId, initialView = 'page', userName, userEmail }
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
           {view === 'my-tasks' && <MyTasksView onOpen={(id) => go(id)} />}
+          {view === 'calendar' && <CalendarView />}
           {view === 'page' && loading && !loadError && <PageSkeleton />}
           {view === 'page' && loadError && (
             <div className={emptyState}>
