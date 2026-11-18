@@ -89,6 +89,21 @@ npm run backup -- restore ~/Backups/hung-workspace/<file>.tar.gz
 
 Once the app runs online, your pages are in the database instead. Run `DATABASE_URL=... npm run backup` to back those up the same way (shared spaces only).
 
+## Linked databases, people and nested pages (Phase 5)
+
+In a database, **Properties → New property** now also offers:
+
+- **Person**: pick people from the space's members (shown by name). Filter by person too.
+- **Relation**: link rows to rows of another database in the same space (for example Tasks → Milestones). Leave "Also show on the other side" ticked and the other database gets a matching column that lists the rows pointing at it; you can edit the link from either side. "Only one linked row" is for things like a parent.
+- **Rollup**: summarise the rows a relation points at: count, percent checked, percent with a status (e.g. Done), sum, average, smallest, largest, earliest or latest date. Rollups are worked out on the fly and are read-only; you can filter and sort on them.
+- **Sub-items**: add a relation from a database to *itself* with "Only one linked row" (call it Parent) and the other side Sub-items. Then, in the view's **⋯** menu, choose "Nest under Parent" and the table or list shows sub-items indented under their parents, with a "+" to add one.
+
+Relations never cross spaces, and a database that is linked to another can't be moved to a different space on its own. Worked-out columns (the other side of a relation, rollups) are never stored in the files, so they can't go out of date.
+
+For pages: every page shows a **breadcrumb** above its title, and a **Sub-pages** list with an "Add a sub-page" button at the bottom. In the editor, type **/** and choose **Sub-page** to create a page inside the current one and drop a link to it where you are typing. (Putting a whole database inline in a page is not built yet.)
+
+`npm run convert-hq` is a one-off that upgrades the TerraScape HQ databases to use all this: Tasks' plain-text Milestone becomes a real link to Milestones, Owner (Vicky / Andrew / Both) becomes a Person, and Milestones gain a task count and progress. It shows what it would do first; add `--apply` to do it. Back up first (`npm run backup -- --force`). To do the online copy, run it with `DATABASE_URL=... npm run convert-hq -- --apply`.
+
 ## How two people don't overwrite each other
 
 There's no live co-editing yet. Each save carries the version it started from. If the page changed elsewhere in the meantime, saving pauses and a banner offers "Load latest", so nobody's work is silently lost.
@@ -102,7 +117,7 @@ npx astro check   # types
 
 ## Not yet (planned)
 
-Relations, rollups and formulas, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
+Formulas, a timeline view and a "My tasks" page, comments and @mentions, row templates and recurring tasks, inline databases inside pages, Claude access (API/MCP), quick capture and bug list, drag-to-reorder, live co-editing, a hosted database for Vercel. Pages are stored through a `PageStore` interface (`src/lib/storage.ts`), so a database-backed store can replace the file store when it goes on Vercel.
 
 ## Put it on Vercel (shared with Andrew)
 
