@@ -1,7 +1,8 @@
 import { defineMiddleware } from 'astro:middleware';
 import { COOKIE, readSession } from './lib/auth';
 
-const PUBLIC_PREFIXES = ['/auth/', '/favicon', '/_astro/'];
+// Public: the sign-in pages and the files a browser needs before you are signed in (icons, install manifest).
+const PUBLIC_PREFIXES = ['/auth/', '/favicon', '/_astro/', '/icons/', '/manifest.webmanifest'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
