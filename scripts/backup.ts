@@ -10,6 +10,10 @@
  *   - DATABASE_URL set  -> the Postgres database (what runs online)
  *   - otherwise         -> the CONTENT_DIR folder (default ./content), what runs on your Mac
  *
+ * What it includes: pages in SHARED spaces only. Nobody's Personal space is backed up here, so one person's
+ * private notes never end up in someone else's backup folder. Each person can export their own space from
+ * Settings -> Spaces.
+ *
  * Where it writes (each folder gets its own copy; either may be left out):
  *   - BACKUP_DIR         default ~/Backups/hung-workspace
  *   - BACKUP_MIRROR_DIR  optional second copy, e.g. a folder inside Google Drive
@@ -100,27 +104,44 @@ function countFiles(dir: string): number {
   return n;
 }
 
-/** Put the current pages in a folder we can archive: the content folder as is, or a fresh download from the database. */
-async function gatherSource(): Promise<{ dir: string; label: string; cleanup: () => void }> {
+/**
+ * Put the pages worth backing up in a folder we can archive. Shared spaces only: everyone's Personal space is
+ * deliberately left out (each person can export their own from Settings), as is the trash.
+ */
+async function gatherSource(): Promise<{ dir: string; label: string; cleanup: () => void; skipped: number }> {
+  const { FilePageStore, LEGACY_SPACE_ID } = await import('../src/lib/storage.ts');
+  let from: InstanceType<typeof FilePageStore> | import('../src/lib/pgstore.ts').PgPageStore;
+  let label: string;
   const url = process.env.DATABASE_URL;
-  if (!url) {
+  if (url) {
+    const { PgPageStore } = await import('../src/lib/pgstore.ts');
+    const { neon } = await import('@neondatabase/serverless');
+    const sql = neon(url, { fullResults: true });
+    from = new PgPageStore(async () => ({ query: (t, p) => sql.query(t, p as any[]) as any }));
+    label = 'the database';
+  } else {
     const dir = path.resolve(process.env.CONTENT_DIR || './content');
     if (!fs.existsSync(dir)) throw new Error(`No pages folder at ${dir}. Run this from the project folder, or set CONTENT_DIR.`);
-    return { dir, label: dir, cleanup: () => {} };
+    from = new FilePageStore(dir);
+    label = dir;
   }
-  const { FilePageStore } = await import('../src/lib/storage.ts');
-  const { PgPageStore } = await import('../src/lib/pgstore.ts');
-  const { neon } = await import('@neondatabase/serverless');
-  const sql = neon(url, { fullResults: true });
-  const pg = new PgPageStore(async () => ({ query: (t, p) => sql.query(t, p as any[]) as any }));
+  const spaces = await from.listSpaces();
+  const shared = spaces.filter((s) => s.kind === 'shared');
+  const sharedIds = new Set([LEGACY_SPACE_ID, ...shared.map((s) => s.id)]);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hung-backup-'));
-  const files = new FilePageStore(tmp);
-  const metas = await pg.list();
+  const out = new FilePageStore(tmp);
+  const metas = await from.list();
+  let skipped = 0;
   for (const m of metas) {
-    const page = await pg.get(m.id);
-    if (page) await files.import(page);
+    if (!sharedIds.has(m.space)) {
+      skipped++;
+      continue;
+    }
+    const page = await from.get(m.id);
+    if (page) await out.import(page);
   }
-  return { dir: tmp, label: 'the database', cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }) };
+  for (const s of shared) await out.saveSpace(s);
+  return { dir: tmp, label, skipped, cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }) };
 }
 
 async function backup() {
@@ -164,7 +185,8 @@ async function backup() {
         console.error(`Could not write a backup to ${dest}: ${(err as Error).message}`);
       }
     }
-    for (const t of made) console.log(`Backed up ${files} files from ${src.label} -> ${t}`);
+    const note = src.skipped ? ` (shared spaces only; ${src.skipped} pages in Personal spaces were left out on purpose)` : '';
+    for (const t of made) console.log(`Backed up ${files} files from ${src.label}${note} -> ${t}`);
     if (failed) process.exitCode = 1;
   } finally {
     src.cleanup();

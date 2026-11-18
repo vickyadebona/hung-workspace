@@ -1,14 +1,21 @@
 import type { APIRoute } from 'astro';
-import { getStore } from '../../../lib/store';
-import { json, readJson, str } from '../../../lib/http';
+import { workspaceFor } from '../../../lib/workspace';
+import { fail, json, readJson, str } from '../../../lib/http';
 
-export const GET: APIRoute = async () => json({ pages: await getStore().list() });
+export const GET: APIRoute = async ({ locals, url }) => {
+  try {
+    return json({ pages: await workspaceFor(locals.user).list(url.searchParams.get('space') ?? undefined) });
+  } catch (e) {
+    return fail(e);
+  }
+};
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ locals, request }) => {
   const body = (await readJson(request)) ?? {};
   try {
     const parent = body.parent === null ? null : (str(body.parent) ?? null);
-    const page = await getStore().create({
+    const page = await workspaceFor(locals.user).create({
+      space: str(body.space),
       title: str(body.title),
       parent,
       body: str(body.body),
@@ -19,7 +26,7 @@ export const POST: APIRoute = async ({ request }) => {
       schema: body.schema,
     });
     return json({ page }, 201);
-  } catch (e: any) {
-    return json({ error: e.message }, 400);
+  } catch (e) {
+    return fail(e);
   }
 };

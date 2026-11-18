@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Command, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { api } from './api';
+import { api, type SearchHit, type Space } from './api';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOpen: (id: string) => void;
+  spaces: Space[];
 }
 
-export default function SearchModal({ open, onOpenChange, onOpen }: Props) {
+export default function SearchModal({ open, onOpenChange, onOpen, spaces }: Props) {
   const [q, setQ] = useState('');
-  const [results, setResults] = useState<{ id: string; title: string; snippet: string }[]>([]);
+  const [results, setResults] = useState<SearchHit[]>([]);
   const [searched, setSearched] = useState(false);
 
   // Start fresh each time the dialog opens.
@@ -49,8 +50,11 @@ export default function SearchModal({ open, onOpenChange, onOpen }: Props) {
         <CommandList>
           {searched && <CommandEmpty>No matches</CommandEmpty>}
           {results.map((r) => (
-            <CommandItem key={r.id} value={r.id} onSelect={() => onOpen(r.id)} className="flex-col items-start gap-0.5">
-              <span className="font-medium">{r.title || 'Untitled'}</span>
+            <CommandItem key={r.id} value={r.id} onSelect={() => onOpen(r.id)} className="flex-col items-stretch gap-0.5">
+              <span className="flex items-baseline gap-2">
+                <span className="font-medium">{r.title || 'Untitled'}</span>
+                <span className="ml-auto flex-none text-xs text-muted-foreground">{spaces.find((x) => x.id === r.space)?.name ?? ''}</span>
+              </span>
               {r.snippet && <span className="w-full truncate text-xs text-muted-foreground">{r.snippet}</span>}
             </CommandItem>
           ))}
