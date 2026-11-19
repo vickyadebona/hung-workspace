@@ -20,8 +20,18 @@ type Reply = { jsonrpc: '2.0'; id: string | number | null; result?: unknown; err
 const TOOLS = [
   {
     name: 'list_tasks',
-    description: 'List the tasks assigned to the user, across all their spaces, with due date, status and priority. Open tasks only unless include_done is true.',
-    inputSchema: { type: 'object', properties: { include_done: { type: 'boolean', description: 'Also list finished tasks' } } },
+    description:
+      'List the tasks assigned to the user, across all their spaces, soonest due first (undated last). Open tasks only unless include_done is true. Prefer narrowing with due_within_days, list or limit over listing everything.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_done: { type: 'boolean', description: 'Also list finished tasks' },
+        due_within_days: { type: 'integer', minimum: 0, description: 'Only tasks due in the next N days, plus anything overdue. 0 means today and overdue. Leaves out tasks with no due date.' },
+        overdue_only: { type: 'boolean', description: 'Only tasks whose due date has passed' },
+        list: { type: 'string', description: 'Only tasks from lists (databases) whose name contains this text, e.g. "Tasks"' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'At most this many (default 25)' },
+      },
+    },
     annotations: { readOnlyHint: true, title: 'List my tasks' },
   },
   {
@@ -65,12 +75,23 @@ function taskOut(t: any) {
   return { id: t.id, title: t.title, due: t.due, status: t.status?.name ?? null, priority: t.priority?.name ?? null, done: t.done, list: t.databaseTitle, space: t.spaceName };
 }
 
-async function callTool(ws: Workspace, name: string, args: Record<string, unknown>) {
+async function callTool(ws: Workspace, name: string, args: Record<string, unknown>, now?: Date) {
   switch (name) {
     case 'list_tasks': {
-      const all = await ws.myTasks();
-      const tasks = (args.include_done === true ? all : all.filter((t) => !t.done)).map(taskOut);
-      return asJson({ count: tasks.length, tasks });
+      let tasks = await ws.myTasks();
+      if (args.include_done !== true) tasks = tasks.filter((t) => !t.done);
+      const list = typeof args.list === 'string' ? args.list.trim().toLowerCase() : '';
+      if (list) tasks = tasks.filter((t) => t.databaseTitle.toLowerCase().includes(list));
+      const today = (now ?? new Date()).toLocaleDateString('en-CA'); // YYYY-MM-DD in the server's day
+      if (args.overdue_only === true) tasks = tasks.filter((t) => t.due && t.due < today);
+      if (typeof args.due_within_days === 'number' && Number.isFinite(args.due_within_days)) {
+        const end = new Date((now ?? new Date()).getTime() + Math.max(0, Math.floor(args.due_within_days)) * 86_400_000).toLocaleDateString('en-CA');
+        tasks = tasks.filter((t) => t.due && t.due <= end);
+      }
+      tasks = [...tasks].sort((a, b) => (a.due ?? '9999-99-99').localeCompare(b.due ?? '9999-99-99') || a.title.localeCompare(b.title));
+      const limit = typeof args.limit === 'number' && args.limit >= 1 ? Math.min(100, Math.floor(args.limit)) : 25;
+      const shown = tasks.slice(0, limit).map(taskOut);
+      return asJson({ total: tasks.length, shown: shown.length, ...(tasks.length > shown.length ? { note: `${tasks.length - shown.length} more not shown; narrow with due_within_days or list, or raise limit.` } : {}), tasks: shown });
     }
     case 'add_task': {
       const due = typeof args.due === 'string' ? args.due : undefined;
@@ -113,7 +134,7 @@ async function callTool(ws: Workspace, name: string, args: Record<string, unknow
 }
 
 /** Handle one JSON-RPC message. Returns null for notifications (nothing to send back). */
-export async function handleRpc(msg: Rpc, ws: Workspace): Promise<Reply | null> {
+export async function handleRpc(msg: Rpc, ws: Workspace, now?: Date): Promise<Reply | null> {
   const id = msg?.id ?? null;
   const ok = (result: unknown): Reply => ({ jsonrpc: '2.0', id, result });
   const err = (code: number, message: string): Reply => ({ jsonrpc: '2.0', id, error: { code, message } });
@@ -138,7 +159,7 @@ export async function handleRpc(msg: Rpc, ws: Workspace): Promise<Reply | null> 
       const args = msg.params?.arguments && typeof msg.params.arguments === 'object' ? msg.params.arguments : {};
       if (typeof name !== 'string' || !TOOLS.some((t) => t.name === name)) return err(-32602, 'Unknown tool');
       try {
-        return ok(await callTool(ws, name, args));
+        return ok(await callTool(ws, name, args, now));
       } catch (e) {
         // Problems with what was asked are reported to the model so it can correct itself; anything else is hidden.
         return ok(text(e instanceof HttpError || (e instanceof Error && e.constructor === Error) ? (e as Error).message : 'Something went wrong.', true));

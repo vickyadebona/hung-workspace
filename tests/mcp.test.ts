@@ -15,8 +15,8 @@ const ALLOWED = [VICKY, ANDREW];
 
 const fresh = async () => new FilePageStore(await fs.mkdtemp(path.join(os.tmpdir(), 'wn-mcp-')));
 const as = (store: FilePageStore, email: string) => new Workspace(store, { email, name: email.split('@')[0] }, ALLOWED);
-const call = async (ws: Workspace, name: string, args: Record<string, unknown> = {}) => {
-  const r: any = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, ws);
+const call = async (ws: Workspace, name: string, args: Record<string, unknown> = {}, now?: Date) => {
+  const r: any = await handleRpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, ws, now);
   const t = r.result.content[0].text as string;
   return { isError: !!r.result.isError, text: t, data: r.result.isError ? null : t.startsWith('{') ? JSON.parse(t) : null };
 };
@@ -65,13 +65,13 @@ test('add, list and complete a task', async () => {
   assert.equal((await call(ws, 'add_task', { title: '  ' })).isError, true);
 
   const open = await call(ws, 'list_tasks');
-  assert.equal(open.data.count, 1);
+  assert.equal(open.data.total, 1);
   const id = open.data.tasks[0].id;
 
   const done = await call(ws, 'complete_task', { id });
   assert.equal(done.data.task.done, true);
-  assert.equal((await call(ws, 'list_tasks')).data.count, 0);
-  assert.equal((await call(ws, 'list_tasks', { include_done: true })).data.count, 1);
+  assert.equal((await call(ws, 'list_tasks')).data.total, 0);
+  assert.equal((await call(ws, 'list_tasks', { include_done: true })).data.total, 1);
 
   const reopened = await call(ws, 'complete_task', { id, done: false });
   assert.equal(reopened.data.task.done, false);
@@ -88,8 +88,34 @@ test("one person's connector never sees or changes another person's pages and ta
   assert.equal((await call(andrew, 'search', { query: 'zebra-secret' })).data.results.length, 0);
   assert.equal((await call(andrew, 'read_page', { id: secret.id })).isError, true);
   assert.equal((await call(andrew, 'complete_task', { id: task.id })).isError, true);
-  assert.equal((await call(andrew, 'list_tasks')).data.count, 0);
+  assert.equal((await call(andrew, 'list_tasks')).data.total, 0);
 
   assert.equal((await call(vicky, 'search', { query: 'zebra-secret' })).data.results[0].id, secret.id);
   assert.match((await call(vicky, 'read_page', { id: secret.id })).text, /zebra-secret/);
+});
+
+test('list_tasks filters, sorts soonest first and caps the list', async () => {
+  const ws = as(await fresh(), VICKY);
+  const now = new Date('2026-11-18T12:00:00');
+  await call(ws, 'add_task', { title: 'No date' });
+  await call(ws, 'add_task', { title: 'Late', due: '2026-11-10' });
+  await call(ws, 'add_task', { title: 'Soon', due: '2026-11-20' });
+  await call(ws, 'add_task', { title: 'Far', due: '2027-02-01' });
+
+  const all = (await call(ws, 'list_tasks', {}, now)).data;
+  assert.deepEqual(all.tasks.map((t: any) => t.title), ['Late', 'Soon', 'Far', 'No date']);
+
+  const week = (await call(ws, 'list_tasks', { due_within_days: 7 }, now)).data;
+  assert.deepEqual(week.tasks.map((t: any) => t.title), ['Late', 'Soon']); // overdue included, undated left out
+
+  const late = (await call(ws, 'list_tasks', { overdue_only: true }, now)).data;
+  assert.deepEqual(late.tasks.map((t: any) => t.title), ['Late']);
+
+  const capped = (await call(ws, 'list_tasks', { limit: 2 }, now)).data;
+  assert.equal(capped.shown, 2);
+  assert.equal(capped.total, 4);
+  assert.match(capped.note, /2 more/);
+
+  assert.equal((await call(ws, 'list_tasks', { list: 'my tasks' }, now)).data.total, 4);
+  assert.equal((await call(ws, 'list_tasks', { list: 'nothing like this' }, now)).data.total, 0);
 });
