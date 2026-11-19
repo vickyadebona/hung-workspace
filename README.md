@@ -130,6 +130,21 @@ One-time setup in Google Cloud Console (the project that holds your sign-in cred
 
 Trying the screens on your Mac without a Google connection: start the app with `AUTH_DEV=1 CALENDAR_MOCK=1` to see example events (this switch does nothing on the live site).
 
+## Connector for Claude, Duet and other tools
+
+`/mcp` is a small [Model Context Protocol](https://modelcontextprotocol.io) server, so a tool that supports MCP can work with your workspace as you:
+
+- `list_tasks`, `add_task`, `complete_task`: your My tasks list, across your spaces
+- `search` and `read_page`: pages you can see (never anyone else's Personal space)
+
+Make a token in **Settings → Integrations → Connector** (one per tool, shown once, revocable). Then add a custom MCP connector in the tool with the address `https://<your-site>/mcp` and the header `Authorization: Bearer <token>`. In Claude Code:
+
+```bash
+claude mcp add --transport http hung-workspace https://<your-site>/mcp --header "Authorization: Bearer <token>"
+```
+
+Tools that only accept a web address (no headers) can use `https://<your-site>/mcp?token=<token>`, but then the token sits in the address, so treat that address like a password. Tokens are stored only as a hash, sealed per person. There is no sign-in screen for connectors yet (OAuth), so claude.ai's "custom connector" form, which wants OAuth, may not accept it; Claude Desktop, Claude Code and other header-capable clients do.
+
 ## How two people don't overwrite each other
 
 There's no live co-editing yet. Each save carries the version it started from. If the page changed elsewhere in the meantime, saving pauses and a banner offers "Load latest", so nobody's work is silently lost.

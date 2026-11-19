@@ -140,6 +140,17 @@ export const api = {
   async disconnectCalendar(): Promise<void> {
     await call('/api/calendar', { method: 'DELETE' });
   },
+  async tokens(): Promise<{ id: string; label: string; createdAt: string }[]> {
+    return (await call<{ tokens: { id: string; label: string; createdAt: string }[] }>('/api/tokens')).data.tokens ?? [];
+  },
+  async createToken(label: string): Promise<string> {
+    const r = await call<{ secret?: string; error?: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ label }) });
+    if (!r.data.secret) throw new Error(r.data.error ?? 'Could not make the token');
+    return r.data.secret;
+  },
+  async revokeToken(id: string): Promise<void> {
+    await call(`/api/tokens?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
   async myTasks(): Promise<MyTask[]> {
     return (await call<{ tasks: MyTask[] }>('/api/my-tasks')).data.tasks ?? [];
   },
