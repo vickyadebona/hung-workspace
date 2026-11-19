@@ -134,7 +134,7 @@ Trying the screens on your Mac without a Google connection: start the app with `
 
 `/mcp` is a small [Model Context Protocol](https://modelcontextprotocol.io) server, so a tool that supports MCP can work with your workspace as you:
 
-- `list_tasks`, `add_task`, `complete_task`: your My tasks list, across your spaces
+- `list_tasks`, `add_task`, `complete_task`: your My tasks list, across your spaces. `list_tasks` sorts by due date and returns 25 by default; it can be narrowed with `due_within_days`, `overdue_only`, `list` (part of a database's name) and `limit`
 - `search` and `read_page`: pages you can see (never anyone else's Personal space)
 
 Make a token in **Settings → Integrations → Connector** (one per tool, shown once, revocable). Then add a custom MCP connector in the tool with the address `https://<your-site>/mcp` and the header `Authorization: Bearer <token>`. In Claude Code:
